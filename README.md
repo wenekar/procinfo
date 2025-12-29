@@ -79,10 +79,10 @@ Extra info  :
 
 ## Why?
 
-I saw an ad on TikTok of this [link to said TikTok video]() written in Go with 4k+ GitHub stars.
+I saw an ad on TikTok of this [link to said TikTok video](https://vt.tiktok.com/ZS5LXha1T) written in Go with 4k+ GitHub stars.
 Then I thought to myself, who is the target user? Who is that binary for? Isn't this just a bash wrapper of `ps -p`?
 
-Thus came procinfo, also see [issue 32](https://github.com/pranshuparmar/witr/issues/32)
+Thus came procinfo, also see [issue 32](https://github.com/pranshuparmar/witr/issues/32).
 
 ## License
 
