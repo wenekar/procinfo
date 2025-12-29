@@ -143,12 +143,22 @@ get_working_dir() {
 }
 
 get_source() {
-    local ppid pcomm
-    ppid=$(get_field "$1" ppid)
+    local pid=$1 ppid pcomm
+    ppid=$(get_field "$pid" ppid)
     pcomm=$(basename "$(get_field "$ppid" comm)" 2>/dev/null)
 
     case "$pcomm" in
-        systemd)           echo "systemd service" ;;
+        systemd)
+            # Try system service first, then user service
+            local service
+            service=$(systemctl whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            [[ -z "$service" ]] && service=$(systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            if [[ -n "$service" ]]; then
+                echo "$service"
+            else
+                echo "systemd service"
+            fi
+            ;;
         launchd)           echo "launchd" ;;
         docker*|containerd*|podman) echo "container runtime" ;;
         pm2)               echo "pm2" ;;
