@@ -302,6 +302,11 @@ print_full() {
             printf '%s\n' "  ${C_GREEN}-${C_RESET} ${C_GREEN}$warn${C_RESET}"
         done
     fi
+
+    if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || "$open_files" == "0"* ) ]]; then
+        printf '\n'
+        printf '%s\n' "${C_DIM}Note: Some info may be hidden due to permissions. Try sudo for full details.${C_RESET}"
+    fi
 }
 
 format_etime() {
