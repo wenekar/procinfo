@@ -226,6 +226,42 @@ get_combined_rss() {
     fi
 }
 
+get_git_info() {
+    local pid=$1
+    local dir=""
+
+    # Try to get script location from command args first
+    local args=$(get_field "$pid" args)
+
+    # Extract first path-like argument (python script.py, node app.js, etc.)
+    local script=$(echo "$args" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
+
+    if [[ -n "$script" && -f "$script" ]]; then
+        dir=$(dirname "$script")
+    else
+        # Fall back to working directory
+        dir=$(get_working_dir "$pid")
+    fi
+
+    [[ -z "$dir" || "$dir" == "unknown" ]] && return
+
+    while [[ "$dir" != "/" && -n "$dir" ]]; do
+        if [[ -d "$dir/.git" ]]; then
+            local repo=$(basename "$dir")
+            local branch=$(sed 's|ref: refs/heads/||' "$dir/.git/HEAD" 2>/dev/null)
+            local remote=$(awk '/\[remote "origin"\]/{found=1} found && /url = /{print $3; exit}' "$dir/.git/config" 2>/dev/null)
+
+            if [[ -n "$remote" ]]; then
+                echo "$repo ($branch) - $remote"
+            else
+                echo "$repo ($branch)"
+            fi
+            return
+        fi
+        dir=$(dirname "$dir")
+    done
+}
+
 collect_warnings() {
     local pid=$1 user=$2 rss=$3 listen=$4
 
@@ -302,6 +338,7 @@ print_full() {
     args=$(get_field "$pid" args)
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
+    git_info=$(get_git_info "$pid")
     open_files=$(get_open_files "$pid")
     listen=$(get_listen_ports "$pid")
     locks=$(get_locks "$pid")
@@ -324,6 +361,7 @@ print_full() {
     printf '%s\n' "  $(build_chain "$pid")"
     printf '\n'
     printf '%s\n' "${C_CYAN}Source${C_RESET}      : ${C_BLUE}$source${C_RESET}"
+    [[ -n "$git_info" ]] && printf '%s\n' "${C_CYAN}git info${C_RESET}    : ${C_BLUE}$git_info${C_RESET}"
     [[ -n "$cwd" ]] && printf '%s\n' "${C_CYAN}Working Dir${C_RESET} : ${C_BLUE}$cwd${C_RESET}"
 
     if [[ -n "$listen" ]]; then
@@ -344,7 +382,7 @@ print_full() {
 
     if [[ -n "$warnings" ]]; then
         printf '\n'
-        printf '%s\n' "${C_YELLOW}Extra info${C_RESET}    :"
+        printf '%s\n' "${C_YELLOW}Extra info${C_RESET}  :"
         echo "$warnings" | while IFS= read -r warn; do
             printf '%s\n' "  ${C_GREEN}-${C_RESET} ${C_GREEN}$warn${C_RESET}"
         done
