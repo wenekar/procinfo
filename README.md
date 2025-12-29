@@ -4,6 +4,8 @@ A portable process inspector for Linux and macOS. Get details about any running 
 
 <img width="1293" height="524" alt="procinfo example" src="https://github.com/user-attachments/assets/5e912e8c-c87a-44ab-aa09-b43fc139a708" />
 
+Also see procinfo_minimal.sh - pure sh implementation of procinfo.
+
 ## Installation
 ```bash
 curl -fsSL https://raw.githubusercontent.com/wenekar/procinfo/main/procinfo.sh -o procinfo
