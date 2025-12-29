@@ -250,7 +250,7 @@ print_full() {
     printf '%s\n' "${C_CYAN}Running for${C_RESET} : ${C_YELLOW}$(format_etime "$etime")${C_RESET}"
     printf '%s\n' "${C_CYAN}RSS${C_RESET}         : ${C_YELLOW}$((rss / 1024)) MB${C_RESET}"
     printf '\n'
-    printf '%s\n' "${C_CYAN}Why It Exists${C_RESET} :"
+    printf '%s\n' "${C_CYAN}Process tree${C_RESET}:"
     printf '%s\n' "  $(build_chain "$pid")"
     printf '\n'
     printf '%s\n' "${C_CYAN}Source${C_RESET}      : ${C_BLUE}$source${C_RESET}"
