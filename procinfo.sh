@@ -195,6 +195,37 @@ get_source() {
     esac
 }
 
+get_child_pids() {
+    local pid=$1
+    local children=$(pgrep -P "$pid" 2>/dev/null)
+    echo "$children"
+    for child in $children; do
+        get_child_pids "$child"
+    done
+}
+
+get_combined_rss() {
+    local pid=$1
+    local total=0
+    local count=0
+
+    # Add self
+    local self_rss=$(get_field "$pid" rss)
+    total=$((total + self_rss))
+    count=1
+
+    # Add all children recursively
+    local all_children=$(get_child_pids "$pid")
+    for child in $all_children; do
+        local child_rss=$(get_field "$child" rss)
+        [[ -n "$child_rss" ]] && total=$((total + child_rss)) && ((count++))
+    done
+
+    if [[ $count -gt 1 ]]; then
+        echo "$((total / 1024)) MB ($count processes)"
+    fi
+}
+
 collect_warnings() {
     local pid=$1 user=$2 rss=$3 listen=$4
 
@@ -260,12 +291,13 @@ print_json() {
 
 print_full() {
     local pid=$1 target=$2
-    local user comm rss etime args cwd source open_files listen locks warnings
+    local user comm rss etime args cwd source open_files listen locks warnings combined_rss
 
     user=$(get_field "$pid" user)
     comm=$(basename "$(get_field "$pid" comm)")
     desc=$(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p')
     rss=$(get_field "$pid" rss)
+    combined_rss=$(get_combined_rss "$pid" combined_rss)
     etime=$(get_field "$pid" etime)
     args=$(get_field "$pid" args)
     cwd=$(get_working_dir "$pid")
@@ -284,7 +316,9 @@ print_full() {
     printf '%s\n' "${C_CYAN}Command${C_RESET}     : ${C_DIM}$args${C_RESET}"
     printf '%s\n' "${C_CYAN}Started at${C_RESET}  : ${C_YELLOW}$(get_start_time "$pid")${C_RESET}"
     printf '%s\n' "${C_CYAN}Running for${C_RESET} : ${C_YELLOW}$(format_etime "$etime")${C_RESET}"
-    printf '%s\n' "${C_CYAN}RSS${C_RESET}         : ${C_YELLOW}$((rss / 1024)) MB${C_RESET}"
+    printf '%s\n' "${C_CYAN}RSS Memory${C_RESET}  : ${C_YELLOW}$((rss / 1024)) MB${C_RESET}"
+    [[ -n "$combined_rss" ]] && \
+    printf '%s\n' "${C_CYAN}Combined RSS${C_RESET}: ${C_YELLOW}$combined_rss${C_RESET}"
     printf '\n'
     printf '%s\n' "${C_CYAN}Process tree${C_RESET}:"
     printf '%s\n' "  $(build_chain "$pid")"
