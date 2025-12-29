@@ -151,18 +151,28 @@ get_source() {
     local pid=$1 ppid pcomm
     ppid=$(get_field "$pid" ppid)
     pcomm=$(basename "$(get_field "$ppid" comm)" 2>/dev/null)
-
     case "$pcomm" in
         systemd)
-            local service path is_user=""
-            # Try user service first (more specific), then system
-            service=$(systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            local service path is_user="" proc_user
+            proc_user=$(get_field "$pid" user)
+
+            # Try user service first (as process owner if we're root)
+            if [[ $EUID -eq 0 ]]; then
+                service=$(runuser -u "$proc_user" -- systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            else
+                service=$(systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            fi
             [[ -n "$service" ]] && is_user="--user"
 
+            # Then try system service
             [[ -z "$service" ]] && service=$(systemctl whoami "$pid" 2>/dev/null | grep -v "does not belong" | grep -v "user@")
 
             if [[ -n "$service" ]]; then
-                path=$(systemctl $is_user show -p FragmentPath --value "$service" 2>/dev/null)
+                if [[ -n "$is_user" && $EUID -eq 0 ]]; then
+                    path=$(runuser -u "$proc_user" -- systemctl --user show -p FragmentPath --value "$service" 2>/dev/null)
+                else
+                    path=$(systemctl $is_user show -p FragmentPath --value "$service" 2>/dev/null)
+                fi
                 if [[ -n "$path" ]]; then
                     echo "$service ($path)"
                 else
