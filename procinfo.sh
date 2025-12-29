@@ -13,6 +13,10 @@ readonly PROGNAME="${0##*/}"
 C_RESET='' C_BOLD='' C_DIM=''
 C_RED='' C_GREEN='' C_YELLOW='' C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE=''
 
+# whatis comm runs slow on Mac, flag to disable
+# https://github.com/wenekar/procinfo/issues/1
+FULL_DESC=false
+
 setup_colors() {
     if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
         C_RESET=$'\033[0m'
@@ -31,7 +35,7 @@ setup_colors() {
 die() { printf '%s\n' "${C_RED}error:${C_RESET} $1" >&2; exit 1; }
 
 usage() {
-    printf '%s\n' "${C_CYAN}${C_BOLD}${PROGNAME}${C_RESET} - why is this running?"
+    printf '%s\n' "${C_CYAN}${C_BOLD}${PROGNAME}${C_RESET} - process information"
     printf '\n'
     printf '%s\n' "${C_YELLOW}USAGE${C_RESET}"
     printf '%s\n' "    ${PROGNAME} --port <port>"
@@ -44,6 +48,7 @@ usage() {
     printf '%s\n' "    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output"
     printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
     printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
+    printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Wait for process description (slow on macOS)"
     printf '%s\n' "    ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}           Show this help"
     printf '%s\n' "    ${C_GREEN}-v${C_RESET}, ${C_GREEN}--version${C_RESET}        Show version"
     printf '\n'
@@ -325,13 +330,23 @@ print_json() {
         }'
 }
 
+get_whatis() {
+    local comm=$1
+    if $FULL_DESC; then
+        whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p'
+    else
+        local desc
+        read -t 0.5 desc < <(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p') && echo "$desc"
+    fi
+}
+
 print_full() {
     local pid=$1 target=$2
     local user comm rss etime args cwd source open_files listen locks warnings combined_rss
 
     user=$(get_field "$pid" user)
     comm=$(basename "$(get_field "$pid" comm)")
-    desc=$(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p')
+    desc=$(get_whatis "$comm")
     rss=$(get_field "$pid" rss)
     combined_rss=$(get_combined_rss "$pid" combined_rss)
     etime=$(get_field "$pid" etime)
@@ -474,6 +489,7 @@ main() {
             -s|--short)   short=true; shift ;;
             -j|--json)    json=true; shift ;;
             --no-color)   NO_COLOR=1; shift ;;
+            -d|--description) FULL_DESC=true; shift ;;
             -h|--help)    setup_colors; usage ;;
             -v|--version) echo "$PROGNAME $VERSION"; exit 0 ;;
             -*)           setup_colors; die "unknown option: $1" ;;
