@@ -2,7 +2,7 @@
 
 A portable process inspector for Linux and macOS. Get details about any running process instantly!
 
-<img alt="procinfo output example" src="https://ibb.co/bg4x1dPF" />
+<img width="1293" height="524" alt="procinfo example" src="https://github.com/user-attachments/assets/5e912e8c-c87a-44ab-aa09-b43fc139a708" />
 
 ## Installation
 ```bash
@@ -11,7 +11,7 @@ chmod +x procinfo
 sudo mv procinfo /usr/local/bin/
 ```
 
-Or just copy the script. It's ~300 lines of bash with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`).
+Or just copy the script. It's ~490 lines of bash with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`).
 
 ## Usage
 ```bash
