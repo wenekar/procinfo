@@ -149,12 +149,20 @@ get_source() {
 
     case "$pcomm" in
         systemd)
-            # Try system service first, then user service
-            local service
-            service=$(systemctl whoami "$pid" 2>/dev/null | grep -v "does not belong")
-            [[ -z "$service" ]] && service=$(systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            local service path is_user=""
+            # Try user service first (more specific), then system
+            service=$(systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
+            [[ -n "$service" ]] && is_user="--user"
+
+            [[ -z "$service" ]] && service=$(systemctl whoami "$pid" 2>/dev/null | grep -v "does not belong" | grep -v "user@")
+
             if [[ -n "$service" ]]; then
-                echo "$service"
+                path=$(systemctl $is_user show -p FragmentPath --value "$service" 2>/dev/null)
+                if [[ -n "$path" ]]; then
+                    echo "$service ($path)"
+                else
+                    echo "$service"
+                fi
             else
                 echo "systemd service"
             fi
