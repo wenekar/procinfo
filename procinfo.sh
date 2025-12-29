@@ -67,7 +67,12 @@ get_pid_by_name() {
     pids=$(pgrep -xi "$name" 2>/dev/null)
     [[ -z "$pids" ]] && pids=$(pgrep -i "$name" 2>/dev/null)
 
-    count=$(echo "$pids" | grep -c . || echo 0)
+    # Count lines properly
+    if [[ -z "$pids" ]]; then
+        count=0
+    else
+        count=$(echo "$pids" | wc -l | tr -d ' ')
+    fi
 
     if [[ $count -gt 1 ]]; then
         printf '%s\n' "${C_YELLOW}Note:${C_RESET} $count processes match '$name', showing first." >&2
