@@ -254,6 +254,7 @@ print_full() {
 
     user=$(get_field "$pid" user)
     comm=$(basename "$(get_field "$pid" comm)")
+    desc=$(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p')
     rss=$(get_field "$pid" rss)
     etime=$(get_field "$pid" etime)
     args=$(get_field "$pid" args)
@@ -267,6 +268,8 @@ print_full() {
     printf '%s\n' "${C_CYAN}Target${C_RESET}      : ${C_WHITE}$target${C_RESET}"
     printf '\n'
     printf '%s\n' "${C_CYAN}Process${C_RESET}     : ${C_GREEN}${C_BOLD}$comm${C_RESET} ${C_DIM}(pid $pid)${C_RESET}"
+    [[ -n "$desc" ]] && \
+    printf '%s\n' "${C_CYAN}Description${C_RESET} : ${C_DIM}$desc${C_RESET}"
     printf '%s\n' "${C_CYAN}User${C_RESET}        : ${C_MAGENTA}$user${C_RESET}"
     printf '%s\n' "${C_CYAN}Command${C_RESET}     : ${C_DIM}$args${C_RESET}"
     printf '%s\n' "${C_CYAN}Started at${C_RESET}  : ${C_YELLOW}$(get_start_time "$pid")${C_RESET}"
