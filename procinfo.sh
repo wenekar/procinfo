@@ -70,7 +70,12 @@ get_pid_by_name() {
     count=$(echo "$pids" | grep -c . || echo 0)
 
     if [[ $count -gt 1 ]]; then
-        printf '%s\n' "${C_YELLOW}Note:${C_RESET} $count processes match '$name', showing first. Use ${C_CYAN}--pid${C_RESET} for specific process." >&2
+        printf '%s\n' "${C_YELLOW}Note:${C_RESET} $count processes match '$name', showing first." >&2
+        echo "$pids" | while read -r p; do
+            local cmd=$(ps -p "$p" -o args= 2>/dev/null | cut -c1-60)
+            printf '  %s--%s %s(pid %s)%s %s\n' "${C_DIM}" "${C_RESET}" "${C_CYAN}" "$p" "${C_RESET}" "$cmd" >&2
+        done
+        printf '%s\n' "Use ${C_CYAN}--pid <pid>${C_RESET} for specific process." >&2
         echo "" >&2
     fi
 
