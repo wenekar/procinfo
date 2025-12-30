@@ -6,15 +6,17 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="1.0.0"
+readonly VERSION="2025.12.30"
 readonly PROGNAME="${0##*/}"
 
 # Colors
 C_RESET='' C_BOLD='' C_DIM=''
 C_RED='' C_GREEN='' C_YELLOW='' C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE=''
 
-# whatis comm runs slow on Mac, flag to disable
-# https://github.com/wenekar/procinfo/issues/1
+# Cached process data
+PROC_USER="" PROC_COMM="" PROC_RSS="" PROC_ETIME="" PROC_PPID="" PROC_LSTART="" PROC_ARGS=""
+# Cached lsof output
+LSOF_OUTPUT=""
 FULL_DESC=false
 
 setup_colors() {
@@ -59,6 +61,27 @@ usage() {
     exit 0
 }
 
+cache_proc_info() {
+    local pid=$1
+    # comm can have dots/special chars - get separately to avoid column alignment issues
+    PROC_COMM=$(ps -p "$pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//')
+    [[ -z "$PROC_COMM" ]] && return 1
+    PROC_COMM="${PROC_COMM##*/}"
+    # These are simple fields (no spaces, predictable widths)
+    read -r PROC_USER PROC_RSS PROC_ETIME PROC_PPID <<< "$(ps -p "$pid" -o user=,rss=,etime=,ppid= 2>/dev/null)"
+    # lstart has spaces - separate call
+    PROC_LSTART=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//')
+    # args can have arbitrary content - separate call
+    PROC_ARGS=$(ps -p "$pid" -o args= 2>/dev/null | sed 's/^[[:space:]]*//')
+    return 0
+}
+
+# Cache lsof output once
+cache_lsof() {
+    local pid=$1
+    LSOF_OUTPUT=$(lsof -p "$pid" 2>/dev/null)
+}
+
 get_pid_by_port() {
     local result
     result=$(lsof -i :"$1" -t 2>/dev/null | head -1)
@@ -92,20 +115,24 @@ get_pid_by_name() {
     echo "$pids" | head -1
 }
 
-get_field() {
-    ps -p "$1" -o "$2=" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
-}
-
 build_chain() {
-    local pid=$1 chain ppid pcomm
-    local comm
-    comm=$(basename "$(get_field "$pid" comm)")
-    chain="${C_GREEN}${C_BOLD}$comm${C_RESET} ${C_DIM}(pid $pid)${C_RESET}"
+    local pid=$1
+    local chain="${C_GREEN}${C_BOLD}${PROC_COMM}${C_RESET} ${C_DIM}(pid $pid)${C_RESET}"
+    local ppid pcomm first=true
 
     while [[ $pid -gt 1 ]]; do
-        ppid=$(get_field "$pid" ppid)
+        if $first; then
+            ppid=$PROC_PPID
+            first=false
+        else
+            ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+        fi
         [[ -z "$ppid" ]] && break
-        pcomm=$(basename "$(get_field "$ppid" comm)")
+
+        pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+        [[ -z "$pcomm" ]] && break
+        pcomm="${pcomm##*/}"
+
         chain="${C_BLUE}$pcomm${C_RESET} ${C_DIM}(pid $ppid)${C_RESET} ${C_MAGENTA}→${C_RESET} $chain"
         [[ "$ppid" -le 1 ]] && break
         pid=$ppid
@@ -114,7 +141,7 @@ build_chain() {
 }
 
 get_listen_ports() {
-    lsof -i -P -n -a -p "$1" 2>/dev/null | awk '/LISTEN/{print $9}' | sort -u
+    echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | sort -u
 }
 
 get_open_files() {
@@ -135,7 +162,7 @@ get_open_files() {
 }
 
 get_locks() {
-    lsof -p "$1" 2>/dev/null | awk '$4~/[0-9]+[a-z]*[wW]/ || /\.lock|\.lck|\.pid|lockfile/{print $9}' | \
+    echo "$LSOF_OUTPUT" | awk '$4~/[0-9]+[a-z]*[wW]/ || /\.lock|\.lck|\.pid|lockfile/{print $9}' | \
         grep -v '^$' | sort -u | head -5
 }
 
@@ -153,15 +180,20 @@ get_working_dir() {
 }
 
 get_source() {
-    local pid=$1 ppid pcomm
-    ppid=$(get_field "$pid" ppid)
-    pcomm=$(basename "$(get_field "$ppid" comm)" 2>/dev/null)
+    local pid=$1
+    local ppid=$PROC_PPID
+    local pcomm
+
+    pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+    pcomm="${pcomm##*/}"
+
+    # command name starts with a dash, most likely a login shell
+    [[ "$pcomm" == -* ]] && { echo "interactive $pcomm shell (login)"; return; }
+
     case "$pcomm" in
         systemd)
-            local service path is_user="" proc_user
-            proc_user=$(get_field "$pid" user)
+            local service path is_user="" proc_user=$PROC_USER
 
-            # Try user service first (as process owner if we're root)
             if [[ $EUID -eq 0 ]]; then
                 service=$(runuser -u "$proc_user" -- systemctl --user whoami "$pid" 2>/dev/null | grep -v "does not belong")
             else
@@ -169,7 +201,6 @@ get_source() {
             fi
             [[ -n "$service" ]] && is_user="--user"
 
-            # Then try system service
             [[ -z "$service" ]] && service=$(systemctl whoami "$pid" 2>/dev/null | grep -v "does not belong" | grep -v "user@")
 
             if [[ -n "$service" ]]; then
@@ -194,37 +225,49 @@ get_source() {
         cron|crond)        echo "cron" ;;
         sshd)              echo "ssh session" ;;
         tmux*|screen)      echo "terminal multiplexer" ;;
-        bash|zsh|fish|sh|dash) echo "interactive shell" ;;
+        bash|zsh|fish|sh|dash) echo "interactive $pcomm shell" ;;
         init)              echo "init system" ;;
         *)                 echo "${pcomm:-unknown}" ;;
     esac
 }
 
-get_child_pids() {
-    local pid=$1
-    local children=$(pgrep -P "$pid" 2>/dev/null)
-    echo "$children"
-    for child in $children; do
-        get_child_pids "$child"
-    done
-}
-
 get_combined_rss() {
     local pid=$1
-    local total=0
-    local count=0
+    local total=0 count=0 child_rss
 
-    # Add self
-    local self_rss=$(get_field "$pid" rss)
-    total=$((total + self_rss))
+    # Self
+    total=$PROC_RSS
     count=1
 
-    # Add all children recursively
-    local all_children=$(get_child_pids "$pid")
-    for child in $all_children; do
-        local child_rss=$(get_field "$child" rss)
-        [[ -n "$child_rss" ]] && total=$((total + child_rss)) && ((count++))
-    done
+    # Get all descendants - collect PIDs first
+    local children
+    children=$(pgrep -P "$pid" 2>/dev/null)
+
+    if [[ -n "$children" ]]; then
+        # Recursively collect all descendant PIDs
+        local all_descendants=""
+        local to_check="$children"
+
+        while [[ -n "$to_check" ]]; do
+            all_descendants+=" $to_check"
+            local next_level=""
+            for c in $to_check; do
+                local grandchildren
+                grandchildren=$(pgrep -P "$c" 2>/dev/null)
+                [[ -n "$grandchildren" ]] && next_level+=" $grandchildren"
+            done
+            to_check="$next_level"
+        done
+
+        # Single ps call for all descendants' RSS
+        if [[ -n "$all_descendants" ]]; then
+            local pids_csv
+            pids_csv=$(echo $all_descendants | tr ' ' ',' | sed 's/^,//')
+            while read -r child_rss; do
+                [[ -n "$child_rss" && "$child_rss" =~ ^[0-9]+$ ]] && total=$((total + child_rss)) && ((count++))
+            done < <(ps -p "$pids_csv" -o rss= 2>/dev/null)
+        fi
+    fi
 
     if [[ $count -gt 1 ]]; then
         echo "$((total / 1024)) MB ($count processes)"
@@ -235,16 +278,12 @@ get_git_info() {
     local pid=$1
     local dir=""
 
-    # Try to get script location from command args first
-    local args=$(get_field "$pid" args)
-
-    # Extract first path-like argument (python script.py, node app.js, etc.)
-    local script=$(echo "$args" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
+    local script
+    script=$(echo "$PROC_ARGS" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
 
     if [[ -n "$script" && -f "$script" ]]; then
         dir=$(dirname "$script")
     else
-        # Fall back to working directory
         dir=$(get_working_dir "$pid")
     fi
 
@@ -252,9 +291,10 @@ get_git_info() {
 
     while [[ "$dir" != "/" && -n "$dir" ]]; do
         if [[ -d "$dir/.git" ]]; then
-            local repo=$(basename "$dir")
-            local branch=$(sed 's|ref: refs/heads/||' "$dir/.git/HEAD" 2>/dev/null)
-            local remote=$(awk '/\[remote "origin"\]/{found=1} found && /url = /{print $3; exit}' "$dir/.git/config" 2>/dev/null)
+            local repo branch remote
+            repo=$(basename "$dir")
+            branch=$(sed 's|ref: refs/heads/||' "$dir/.git/HEAD" 2>/dev/null)
+            remote=$(awk '/\[remote "origin"\]/{found=1} found && /url = /{print $3; exit}' "$dir/.git/config" 2>/dev/null)
 
             if [[ -n "$remote" ]]; then
                 echo "$repo ($branch) - $remote"
@@ -288,32 +328,27 @@ print_json() {
     command -v jq &>/dev/null || die "--json requires jq"
 
     local pid=$1 target=$2
-    local user comm rss etime args cwd source listen
+    local listen cwd source
 
-    user=$(get_field "$pid" user)
-    comm=$(basename "$(get_field "$pid" comm)")
-    rss=$(get_field "$pid" rss)
-    etime=$(get_field "$pid" etime)
-    args=$(get_field "$pid" args)
+    listen=$(get_listen_ports)
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
-    listen=$(get_listen_ports "$pid")
 
     jq -n \
         --arg target "$target" \
-        --arg comm "$comm" \
+        --arg comm "$PROC_COMM" \
         --arg pid "$pid" \
-        --arg user "$user" \
-        --arg command "$args" \
-        --arg started "$etime" \
-        --arg rss_mb "$((rss / 1024))" \
+        --arg user "$PROC_USER" \
+        --arg command "$PROC_ARGS" \
+        --arg started "$PROC_ETIME" \
+        --arg rss_mb "$((PROC_RSS / 1024))" \
         --arg chain "$(build_chain "$pid")" \
         --arg cwd "$cwd" \
         --arg source "$source" \
         --arg open_files "$(get_open_files "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
-        --argjson locks "$(get_locks "$pid" | jq -R . | jq -s .)" \
-        --argjson warnings "$(collect_warnings "$pid" "$user" "$rss" "$listen" | jq -R . | jq -s .)" \
+        --argjson locks "$(get_locks | jq -R . | jq -s .)" \
+        --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
         '{
             target: $target,
             process: { name: $comm, pid: ($pid|tonumber), user: $user },
@@ -332,43 +367,44 @@ print_json() {
 
 get_whatis() {
     local comm=$1
+    local desc
+
     if $FULL_DESC; then
         whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p'
-    else
-        local desc
+    elif [[ ${BASH_VERSINFO[0]} -ge 4 ]]; then
+        # Bash 4+ supports fractional timeout - fast, no fork
         read -t 0.5 desc < <(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p') && echo "$desc"
+    elif command -v timeout &>/dev/null; then
+        # Fallback for bash 3.x with coreutils
+        timeout 0.5 whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p'
     fi
 }
 
+
 print_full() {
     local pid=$1 target=$2
-    local user comm rss etime args cwd source open_files listen locks warnings combined_rss
+    local cwd source git_info open_files listen locks warnings combined_rss desc
 
-    user=$(get_field "$pid" user)
-    comm=$(basename "$(get_field "$pid" comm)")
-    desc=$(get_whatis "$comm")
-    rss=$(get_field "$pid" rss)
-    combined_rss=$(get_combined_rss "$pid" combined_rss)
-    etime=$(get_field "$pid" etime)
-    args=$(get_field "$pid" args)
+    desc=$(get_whatis "$PROC_COMM")
+    combined_rss=$(get_combined_rss "$pid")
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
     git_info=$(get_git_info "$pid")
     open_files=$(get_open_files "$pid")
-    listen=$(get_listen_ports "$pid")
-    locks=$(get_locks "$pid")
-    warnings=$(collect_warnings "$pid" "$user" "$rss" "$listen")
+    listen=$(get_listen_ports)
+    locks=$(get_locks)
+    warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
 
     printf '%s\n' "${C_CYAN}Target${C_RESET}      : ${C_WHITE}$target${C_RESET}"
     printf '\n'
-    printf '%s\n' "${C_CYAN}Process${C_RESET}     : ${C_GREEN}${C_BOLD}$comm${C_RESET} ${C_DIM}(pid $pid)${C_RESET}"
+    printf '%s\n' "${C_CYAN}Process${C_RESET}     : ${C_GREEN}${C_BOLD}${PROC_COMM}${C_RESET} ${C_DIM}(pid $pid)${C_RESET}"
     [[ -n "$desc" ]] && \
     printf '%s\n' "${C_CYAN}Description${C_RESET} : ${C_DIM}$desc${C_RESET}"
-    printf '%s\n' "${C_CYAN}User${C_RESET}        : ${C_MAGENTA}$user${C_RESET}"
-    printf '%s\n' "${C_CYAN}Command${C_RESET}     : ${C_DIM}$args${C_RESET}"
-    printf '%s\n' "${C_CYAN}Started at${C_RESET}  : ${C_YELLOW}$(get_start_time "$pid")${C_RESET}"
-    printf '%s\n' "${C_CYAN}Running for${C_RESET} : ${C_YELLOW}$(format_etime "$etime")${C_RESET}"
-    printf '%s\n' "${C_CYAN}RSS Memory${C_RESET}  : ${C_YELLOW}$((rss / 1024)) MB${C_RESET}"
+    printf '%s\n' "${C_CYAN}User${C_RESET}        : ${C_MAGENTA}${PROC_USER}${C_RESET}"
+    printf '%s\n' "${C_CYAN}Command${C_RESET}     : ${C_DIM}${PROC_ARGS}${C_RESET}"
+    printf '%s\n' "${C_CYAN}Started at${C_RESET}  : ${C_YELLOW}${PROC_LSTART}${C_RESET}"
+    printf '%s\n' "${C_CYAN}Running for${C_RESET} : ${C_YELLOW}$(format_etime "$PROC_ETIME")${C_RESET}"
+    printf '%s\n' "${C_CYAN}RSS Memory${C_RESET}  : ${C_YELLOW}$((PROC_RSS / 1024)) MB${C_RESET}"
     [[ -n "$combined_rss" ]] && \
     printf '%s\n' "${C_CYAN}Combined RSS${C_RESET}: ${C_YELLOW}$combined_rss${C_RESET}"
     printf '\n'
@@ -472,11 +508,6 @@ format_etime() {
     echo "$result"
 }
 
-get_start_time() {
-    local pid=$1
-    ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//'
-}
-
 main() {
     local port="" pid="" name="" short=false json=false target=""
 
@@ -529,7 +560,9 @@ main() {
         target="pid $pid"
     fi
 
-    ps -p "$pid" &>/dev/null || die "process $pid does not exist"
+    # Cache everything upfront
+    cache_proc_info "$pid" || die "process $pid does not exist"
+    cache_lsof "$pid"
 
     if $json; then
         print_json "$pid" "$target"
