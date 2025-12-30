@@ -277,14 +277,27 @@ get_combined_rss() {
 get_git_info() {
     local pid=$1
     local dir=""
+    local exe
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
 
-    local script
-    script=$(echo "$PROC_ARGS" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
-
-    if [[ -n "$script" && -f "$script" ]]; then
-        dir=$(dirname "$script")
-    else
-        dir=$(get_working_dir "$pid")
+    if [[ -n "$exe" && -f "$exe" ]]; then
+        case "$exe" in
+            /usr/*|/bin/*|/sbin/*)
+                # System binary - check for script in args
+                local script
+                script=$(echo "$PROC_ARGS" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
+                if [[ -n "$script" && -f "$script" ]]; then
+                    dir=$(dirname "$script")
+                else
+                    # System binary, no script - git info not relevant
+                    echo "not found"
+                    return
+                fi
+                ;;
+            *)
+                dir=$(dirname "$exe")
+                ;;
+        esac
     fi
 
     [[ -z "$dir" || "$dir" == "unknown" ]] && return
@@ -295,7 +308,6 @@ get_git_info() {
             repo=$(basename "$dir")
             branch=$(sed 's|ref: refs/heads/||' "$dir/.git/HEAD" 2>/dev/null)
             remote=$(awk '/\[remote "origin"\]/{found=1} found && /url = /{print $3; exit}' "$dir/.git/config" 2>/dev/null)
-
             if [[ -n "$remote" ]]; then
                 echo "$repo ($branch) - $remote"
             else
