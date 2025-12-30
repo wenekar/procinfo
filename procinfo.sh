@@ -79,7 +79,7 @@ cache_proc_info() {
 # Cache lsof output once
 cache_lsof() {
     local pid=$1
-    LSOF_OUTPUT=$(lsof -p "$pid" 2>/dev/null)
+    LSOF_OUTPUT=$(lsof -Pn -p "$pid" 2>/dev/null)
 }
 
 get_pid_by_port() {
