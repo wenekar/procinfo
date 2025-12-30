@@ -23,7 +23,7 @@ setup_colors() {
     if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
         C_RESET=$'\033[0m'
         C_BOLD=$'\033[1m'
-        C_DIM=$'\033[2m'
+        C_DIM=$'\033[90m'
         C_RED=$'\033[31m'
         C_GREEN=$'\033[32m'
         C_YELLOW=$'\033[33m'
@@ -142,6 +142,37 @@ build_chain() {
 
 get_listen_ports() {
     echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | sort -u
+}
+
+get_docker_info() {
+    local pid=$1
+
+    # Only for docker-proxy
+    [[ "$PROC_COMM" != "docker-proxy" ]] && return
+
+    local container_ip container_port container_id container_name image
+
+    container_ip=$(echo "$PROC_ARGS" | grep -oP '(?<=-container-ip )[0-9.]+')
+    container_port=$(echo "$PROC_ARGS" | grep -oP '(?<=-container-port )[0-9]+')
+
+    # Find container by IP
+    container_id=$(docker network inspect bridge -f '{{range .Containers}}{{if eq .IPv4Address "'"$container_ip"'/16"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
+
+    # Fallback: find by port mapping
+    if [[ -z "$container_id" ]]; then
+        container_id=$(docker ps --filter "publish=$container_port" -q 2>/dev/null | head -1)
+    fi
+
+    [[ -z "$container_id" ]] && return
+
+    container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
+    image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+
+    echo "container:$container_id"
+    echo "name:$container_name"
+    echo "image:$image"
+    echo "ip:$container_ip"
+    echo "port:$container_port"
 }
 
 get_file_handles() {
@@ -400,7 +431,7 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info file_handles listen locks warnings combined_rss desc
+    local cwd source git_info file_handles listen locks warnings combined_rss desc docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
@@ -411,6 +442,7 @@ print_full() {
     listen=$(get_listen_ports)
     locks=$(get_locks)
     warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
+    docker_info=$(get_docker_info "$pid")
 
     printf '%s\n' "${C_CYAN}Target${C_RESET}      : ${C_WHITE}$target${C_RESET}"
     printf '\n'
@@ -446,6 +478,28 @@ print_full() {
         echo "$locks" | tail -n +2 | while IFS= read -r lock; do
             printf '%s\n' "              ${C_MAGENTA}$lock${C_RESET}"
         done
+    fi
+
+    if [[ -n "$docker_info" ]]; then
+        printf '\n'
+        printf '%s\n' "${C_CYAN}Docker info${C_RESET} :"
+
+        local cid cname cimage cip cport
+        cid=$(echo "$docker_info" | grep '^container:' | cut -d: -f2)
+        cname=$(echo "$docker_info" | grep '^name:' | cut -d: -f2)
+        cimage=$(echo "$docker_info" | grep '^image:' | cut -d: -f2)
+        cip=$(echo "$docker_info" | grep '^ip:' | cut -d: -f2)
+        cport=$(echo "$docker_info" | grep '^port:' | cut -d: -f2)
+
+        printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
+        printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
+        printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
+        printf '\n'
+        printf '%s\n' "${C_DIM}Docker cheatsheet:${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker logs $cname${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker exec -it $cname sh${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker top $cname${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker ps //see all containers${C_RESET}"
     fi
 
     if [[ -n "$warnings" ]]; then
