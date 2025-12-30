@@ -144,20 +144,25 @@ get_listen_ports() {
     echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | sort -u
 }
 
-get_open_files() {
-    local pid=$1 count limit
+get_file_handles() {
+    local pid=$1 count limit pct
     count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d ' ')
-
     if [[ -f "/proc/$pid/limits" ]]; then
         limit=$(awk '/Max open files/{print $4}' "/proc/$pid/limits" 2>/dev/null)
     else
         limit=$(ulimit -n 2>/dev/null)
     fi
 
-    if [[ -n "$limit" && "$limit" != "unlimited" && "$limit" -gt 0 ]] 2>/dev/null; then
-        echo "$count of $limit ($((count * 100 / limit))%)"
-    else
-        echo "$count"
+    [[ ! "$limit" =~ ^[0-9]+$ ]] && return
+
+    pct=$((count * 100 / limit))
+
+    if [[ $pct -ge 75 ]]; then
+        echo "$count of $limit ($pct%) ⚠ high"
+    elif [[ $pct -ge 50 ]]; then
+        echo "$count of $limit ($pct%) ⚠ elevated"
+    elif $VERBOSE; then
+        echo "$count of $limit ($pct%)"
     fi
 }
 
@@ -357,7 +362,7 @@ print_json() {
         --arg chain "$(build_chain "$pid")" \
         --arg cwd "$cwd" \
         --arg source "$source" \
-        --arg open_files "$(get_open_files "$pid")" \
+        --arg file_handles "$(get_file_handles "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
         --argjson locks "$(get_locks | jq -R . | jq -s .)" \
         --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
@@ -370,7 +375,7 @@ print_json() {
             chain: $chain,
             working_dir: $cwd,
             source: $source,
-            open_files: $open_files,
+            file_handles: $file_handles,
             listening: $listening,
             locks: $locks,
             warnings: $warnings
@@ -395,14 +400,14 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info open_files listen locks warnings combined_rss desc
+    local cwd source git_info file_handles listen locks warnings combined_rss desc
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
     git_info=$(get_git_info "$pid")
-    open_files=$(get_open_files "$pid")
+    file_handles=$(get_file_handles "$pid")
     listen=$(get_listen_ports)
     locks=$(get_locks)
     warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
@@ -434,7 +439,7 @@ print_full() {
         done
     fi
 
-    printf '%s\n' "${C_CYAN}Open Files${C_RESET}  : ${C_YELLOW}$open_files${C_RESET}"
+    [[ -n "$file_handles" ]] && printf '%s\n' "${C_CYAN}File Handles${C_RESET}: ${C_YELLOW}$file_handles${C_RESET}"
 
     if [[ -n "$locks" ]]; then
         printf '%s\n' "${C_CYAN}Locks${C_RESET}       : ${C_MAGENTA}$(echo "$locks" | head -1)${C_RESET}"
@@ -451,7 +456,7 @@ print_full() {
         done
     fi
 
-    if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || "$open_files" == "0"* ) ]]; then
+    if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || "$file_handles" == "0"* ) ]]; then
         printf '\n'
         printf '%s\n' "${C_DIM}Note: Some info may be hidden due to permissions. Try sudo for full details.${C_RESET}"
     fi
