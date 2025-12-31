@@ -234,9 +234,24 @@ get_file_handles() {
     fi
 }
 
-get_locks() {
-    echo "$LSOF_OUTPUT" | awk '$4~/[0-9]+[a-z]*[wW]/ || /\.lock|\.lck|\.pid|lockfile/{print $9}' | \
-        grep -v '^$' | sort -u | head -5
+get_locked_files() {
+    echo "$LSOF_OUTPUT" | awk '
+        /\.lock|\.lck|\.pid|lockfile/ {print $9; next}
+        $4 ~ /^[0-9]+[a-z]*[RW]/      {print $9}
+    ' | grep -v '^$' | sort -u | head -5
+}
+
+get_open_files() {
+    echo "$LSOF_OUTPUT" | awk '
+        $4 == "cwd" || $4 == "rtd" || $4 == "txt" || $4 == "mem" || $4 == "DEL" { next }
+        $4 !~ /^[3-9][0-9]*[rwuRW]?$/ && $4 !~ /^[0-9]{2,}[rwuRW]?$/ { next }
+        $5 != "REG" { next }
+        $9 ~ /^\/dev\// || $9 ~ /^\/proc\// || $9 ~ /^\/sys\// { next }
+        $9 ~ /\.so($|\.)/ || $9 ~ /\/lib\/|\/lib64\// { next }
+        $9 ~ /\.lock$|\.lck$|\.pid$|lockfile/ { next }
+        $9 ~ /gconv-modules|ld\.so\.cache|\.cache\// { next }
+        $9 != "" { print $9 }
+    ' | sort -u | head -5
 }
 
 get_working_dir() {
@@ -502,7 +517,8 @@ print_json() {
         --arg git_info "$git_info" \
         --arg file_handles "$(get_file_handles "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
-        --argjson locks "$(get_locks | jq -R . | jq -s .)" \
+        --argjson open_files "$(get_open_files | jq -R . | jq -s .)" \
+        --argjson locked_files "$(get_locked_files | jq -R . | jq -s .)" \
         --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
         --argjson docker "$docker_json" \
         '{
@@ -517,7 +533,8 @@ print_json() {
             working_dir: $cwd,
             source: $source,
             git_info: $git_info,
-            file_handles: $file_handles,
+            open_files: $open_files,
+            locked_files: $locked_files,
             listening: $listening,
             locks: $locks,
             docker: $docker,
@@ -543,7 +560,7 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info ssh_info file_handles listen locks warnings combined_rss desc docker_info
+    local cwd source git_info ssh_info open_files locked_files listen warnings combined_rss desc docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
@@ -551,9 +568,9 @@ print_full() {
     source=$(get_source "$pid")
     ssh_info=$(get_ssh_info "$pid")
     git_info=$(get_git_info "$pid")
-    file_handles=$(get_file_handles "$pid")
+    open_files=$(get_open_files)
+    locked_files=$(get_locked_files)
     listen=$(get_listen_ports)
-    locks=$(get_locks)
     warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
     docker_info=$(get_docker_info "$pid" "$target")
 
@@ -585,13 +602,18 @@ print_full() {
         done
     fi
 
-    [[ -n "$file_handles" ]] && printf '%s\n' "${C_CYAN}File Handles${C_RESET}: ${C_YELLOW}$file_handles${C_RESET}"
+    if [[ -n "$open_files" ]]; then
+        printf '%s\n' "${C_CYAN}Open files${C_RESET}  : ${C_GREEN}$(echo "$open_files" | head -1)${C_RESET}"
+        echo "$open_files" | tail -n +2 | while IFS= read -r file; do
+            printf '%s\n' "              ${C_GREEN}$file${C_RESET}"
+            done
+    fi
 
-    if [[ -n "$locks" ]]; then
-        printf '%s\n' "${C_CYAN}Locks${C_RESET}       : ${C_MAGENTA}$(echo "$locks" | head -1)${C_RESET}"
-        echo "$locks" | tail -n +2 | while IFS= read -r lock; do
+    if [[ -n "$locked_files" ]]; then
+        printf '%s\n' "${C_CYAN}Locks${C_RESET}       : ${C_MAGENTA}$(echo "$locked_files" | head -1)${C_RESET}"
+        echo "$locked_files" | tail -n +2 | while IFS= read -r lock; do
             printf '%s\n' "              ${C_MAGENTA}$lock${C_RESET}"
-        done
+            done
     fi
 
     if [[ -n "$docker_info" ]]; then
