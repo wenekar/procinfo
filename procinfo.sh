@@ -18,6 +18,7 @@ PROC_USER="" PROC_COMM="" PROC_RSS="" PROC_ETIME="" PROC_PPID="" PROC_LSTART="" 
 # Cached lsof output
 LSOF_OUTPUT=""
 FULL_DESC=false
+VERBOSE=false
 
 setup_colors() {
     if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
@@ -665,6 +666,7 @@ main() {
             -j|--json)    json=true; shift ;;
             --no-color)   NO_COLOR=1; shift ;;
             -d|--description) FULL_DESC=true; shift ;;
+            -vv|--verbose) VERBOSE=true; shift ;;
             -h|--help)    setup_colors; usage ;;
             -v|--version) echo "$PROGNAME $VERSION"; exit 0 ;;
             -*)           setup_colors; die "unknown option: $1" ;;
