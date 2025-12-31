@@ -175,10 +175,15 @@ get_docker_info() {
 
         container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
         image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+        local compose_project compose_file
+        compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
+        compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
 
         echo "container:$container_id"
         echo "name:$container_name"
         echo "image:$image"
+        [[ -n "$compose_project" ]] && echo "compose:$compose_project"
+        [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
         echo "ip:$container_ip"
         echo "port:$container_port"
         return
@@ -208,10 +213,15 @@ get_docker_info() {
 
     container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
     image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+    local compose_project compose_file
+    compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
+    compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
 
     echo "container:$container_id"
     echo "name:$container_name"
     echo "image:$image"
+    [[ -n "$compose_project" ]] && echo "compose:$compose_project"
+    [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
 }
 
 get_file_handles() {
@@ -649,15 +659,19 @@ print_full() {
         printf '\n'
         printf '%s\n' "${C_CYAN}Docker info${C_RESET} :"
 
-        local cid cname cimage cip cport
+        local cid cname cimage cip cport ccompose ccomposefile
         cid=$(echo "$docker_info" | grep '^container:' | cut -d: -f2)
         cname=$(echo "$docker_info" | grep '^name:' | cut -d: -f2)
         cimage=$(echo "$docker_info" | grep '^image:' | cut -d: -f2)
         cip=$(echo "$docker_info" | grep '^ip:' | cut -d: -f2)
         cport=$(echo "$docker_info" | grep '^port:' | cut -d: -f2)
+        ccompose=$(echo "$docker_info" | grep '^compose:' | cut -d: -f2)
+        ccomposefile=$(echo "$docker_info" | grep '^composefile:' | cut -d: -f2-)
 
         printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
         printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
+        [[ -n "$ccompose" ]] && \
+        printf '%s\n' "  Compose   : ${C_MAGENTA}$ccompose${C_RESET} ${C_DIM}($ccomposefile)${C_RESET}"
         [[ -n "$cip" && -n "$cport" ]] && \
         printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
         printf '\n'
