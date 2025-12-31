@@ -252,6 +252,40 @@ get_working_dir() {
     echo "$result"
 }
 
+get_ssh_info() {
+    local pid=$1
+    local env_file="/proc/$pid/environ"
+
+    [[ -r "$env_file" ]] || return
+
+    local ssh_conn=""
+    local ssh_user=""
+
+    while IFS= read -r -d '' var; do
+        case "$var" in
+            SSH_CONNECTION=*)
+                ssh_conn="${var#*=}"
+                ;;
+            SSH_CLIENT=*)
+                [[ -z "$ssh_conn" ]] && ssh_conn="${var#*=}"
+                ;;
+            USER=*)
+                ssh_user="${var#*=}"
+                ;;
+        esac
+    done < "$env_file"
+
+    # No ssh info found
+    [[ -z "$ssh_conn" ]] && return
+
+    local client_ip="${ssh_conn%% *}"
+    if [[ -n "$ssh_user" ]]; then
+        echo "${ssh_user}@${client_ip}"
+    else
+        echo "$client_ip"
+    fi
+}
+
 get_source() {
     local pid=$1
     local ppid=$PROC_PPID
@@ -296,24 +330,8 @@ get_source() {
         pm2)               echo "pm2" ;;
         supervisord)       echo "supervisor" ;;
         cron|crond)        echo "cron" ;;
-        sshd)
-            local client_ip=""
-            if [[ -r "/proc/$pid/environ" ]]; then
-                local env_data
-                env_data=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
-                client_ip=$(echo "$env_data" | grep "^SSH_CONNECTION=" | sed 's/^SSH_CONNECTION=//' | awk '{print $1}')
-                # SSH Client fallback
-                if [[ -z "$client_ip" ]]; then
-                    client_ip=$(echo "$env_data" | grep "^SSH_CLIENT=" | sed 's/^SSH_CLIENT=//' | awk '{print $1}')
-                fi
-            fi
-
-            if [[ -n "$client_ip" ]]; then
-                echo "ssh session (from $client_ip)"
-            else
-                echo "ssh session"
-            fi
-            ;;
+        ssh|sshd|sshd-session)
+                echo "ssh session" ;;
         tmux*|screen)      echo "terminal multiplexer" ;;
         bash|zsh|fish|sh|dash) echo "interactive $pcomm shell" ;;
         init)              echo "init system" ;;
@@ -525,12 +543,13 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info file_handles listen locks warnings combined_rss desc docker_info
+    local cwd source git_info ssh_info file_handles listen locks warnings combined_rss desc docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
+    ssh_info=$(get_ssh_info "$pid")
     git_info=$(get_git_info "$pid")
     file_handles=$(get_file_handles "$pid")
     listen=$(get_listen_ports)
@@ -555,6 +574,7 @@ print_full() {
     printf '%s\n' "  $(build_chain "$pid")"
     printf '\n'
     printf '%s\n' "${C_CYAN}Source${C_RESET}      : ${C_BLUE}$source${C_RESET}"
+    [[ -n "$ssh_info" ]] && printf '%s\n' "${C_CYAN}ssh info${C_RESET}    : ${C_BLUE}$ssh_info${C_RESET}"
     [[ -n "$git_info" ]] && printf '%s\n' "${C_CYAN}git info${C_RESET}    : ${C_BLUE}$git_info${C_RESET}"
     [[ -n "$cwd" ]] && printf '%s\n' "${C_CYAN}Working Dir${C_RESET} : ${C_BLUE}$cwd${C_RESET}"
 
