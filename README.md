@@ -15,6 +15,40 @@ sudo mv procinfo /usr/local/bin/
 
 Or just copy the script. It's a bash script with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`). Or better yet, copy parts of it, combine them, make one script that satisfies your specific needs!
 
+## Features
+
+- **Cross-platform** - Works on Linux and macOS (no Windows?)
+- **Zero dependencies** - Except for bash and standard Unix tools, and maybe an operating system.
+- **Process tree** - See all parents of a given process. (shocking!)
+- **Environment inspection** - See ENV variables for a given process (-V or --env)
+- **Systemd integration** - If a process belongs to a .service, shows the path to that .service file.
+- **SSH integration** - Instantly see the user@IP of the ssh-session that started the process.
+- **git integration** - Does the process belong to a git repo? See the branch, and remote URL directly in the output.
+- **Docker aware** - Detects containers, composes, container-id, image name, port bindings... May add more info later.
+- **Network info** - Shows all listening ports for a process.
+- **Lock detection** - Shows lock files and open files of the process.
+- **Multiple formats** - Human-readable, short one-liner, or JSON
+- **Case-insensitive** - `procinfo nginx` matches `Nginx`, `NGINX`, etc.
+
+## Requirements
+
+procinfo:
+- A UNIX-like system
+- bash
+- ps
+- lsof
+- pgrep
+
+Optional dependencies:
+- docker
+- git
+- systemctl
+- whatis (included with man)
+- jq (json output support)
+
+procinfo_minimal:
+- sh
+
 ## Usage
 ```bash
 # By process name
@@ -35,46 +69,23 @@ procinfo --json nginx
 
 ## Example Output
 ```
-Target      : port 8000
+Target      : godot
 
-Process     : com.docker.backend (pid 2398)
+Process     : godot.linuxbsd. (pid 234167)
 User        : wenekar
-Command     : /Applications/Docker.app/Contents/MacOS/com.docker.backend services
-Started at  : Thu Dec 25 09:53:50 2025
-Running for : 6 days, 7 hours, 22 minutes, 44 seconds
-RSS Memory  : 112 MB
-Combined RSS: 141 MB (2 processes)
+Command     : ./bin/godot.linuxbsd.editor.x86_64 --verbose
+Started at  : Wed Dec 31 19:12:10 2025
+Running for : 1 minute, 6 seconds
+RSS Memory  : 330 MB
 
 Process tree:
-  launchd (pid 1) → com.docker.backend (pid 2396) → com.docker.backend (pid 2398)
+  systemd (pid 1) → systemd (pid 1141) → konsole (pid 1725) → fish (pid 233851) → godot.linuxbsd. (pid 234167)
 
-Source      : com.docker.backend
-Working Dir : /Users/wenekar/Library/Containers/com.docker.docker/Data
-Listening   : *:15672
-              *:27017
-              *:5432
-              *:5672
-              *:6379
-              *:8000
-Open files  : /Users/wenekar/.docker/.token_seed
-              /Users/wenekar/.docker/config.json
-              /Users/wenekar/.docker/contexts/meta/fe9c6bd7a66301f49ca9b6a70b217107cd1284598bfc254700c989b916da791e/meta.json
-              /Users/wenekar/.docker/daemon.json
-              /Users/wenekar/Documents/GitLab/backend/.env.docker
-Locks       : /Users/wenekar/.docker/.token_seed.lock
-              /Users/wenekar/.docker/mutagen/daemon/daemon.lock
-              /Users/wenekar/Library/Containers/com.docker.docker/backend.lock
-
-Docker info :
-  Container : backend-django-backend-1 (78b6e1cdc4ae)
-  Image     : backend-django-backend
-  Compose   : backend (/Users/wenekar/Documents/GitLab/backend/docker-compose.yml)
-
-Docker cheatsheet:
-  docker logs backend-django-backend-1
-  docker exec -it backend-django-backend-1 sh
-  docker top backend-django-backend-1
-  docker ps //see all containers
+Source      : interactive fish shell
+git info    : godot (fix-libdecor-ssd-fallback) - git@github.com:wenekar/godot.git
+Working Dir : /mnt/Sandisk480/GitHub/godot
+Open files  : /memfd:kwin-xkb-keymap-shared
+              /memfd:wayland-cursor
 ```
 
 ### Docker Container
@@ -82,32 +93,33 @@ When inspecting a port bound to a Docker container:
 ```
 Target      : port 6379
 
-Process     : docker-proxy (pid 5678)
-...
+Process     : docker-proxy (pid 31782)
+User        : root
+Command     : /usr/bin/docker-proxy -proto tcp -host-ip 0.0.0.0 -host-port 6379 -container-ip 172.18.0.2 -container-port 6379 -use-listen-fd
+Started at  : Wed Dec 31 01:45:01 2025
+Running for : 17 hours, 28 minutes, 39 seconds
+RSS Memory  : 6 MB
+
+Process tree:
+  systemd (pid 1) → dockerd (pid 25817) → docker-proxy (pid 31782)
+
+Source      : container runtime
+git info    : not found
+Working Dir : /
+Listening   : *:6379
 
 Docker info :
-  Container : my-redis (abc123def456)
-  Image     : redis:alpine
-  Internal  : 172.17.0.2:6379
+  Container : redis (463ab2f88502)
+  Image     : redis
+  Compose   : backend_test (/home/wenekar/backend_test/docker-compose.yml)
+  Internal  : 172.18.0.2:6379
 
 Docker cheatsheet:
-  docker logs my-redis
-  docker exec -it my-redis sh
-  docker top my-redis
+  docker logs redis
+  docker exec -it redis sh
+  docker top redis
   docker ps //see all containers
 ```
-
-## Features
-
-- **Cross-platform** - Works on Linux and macOS
-- **Zero dependencies** - Just bash and standard Unix tools
-- **Process ancestry** - Shows the full chain of how a process came to exist (including systemd.service files if found)
-- **Source detection** - Identifies systemd, launchd, Docker, pm2, cron, SSH, etc.
-- **Docker awareness** - Detects containers behind port bindings, shows image and helpful commands
-- **Network info** - Shows all listening ports for a process
-- **Lock detection** - Shows lock files held by the process
-- **Multiple formats** - Human-readable, short one-liner, or JSON
-- **Case-insensitive** - `procinfo nginx` matches `Nginx`, `NGINX`, etc.
 
 ## Options
 
@@ -124,10 +136,10 @@ Docker cheatsheet:
 
 ## Why?
 
-I saw an ad on TikTok of this [link to said TikTok video](https://vt.tiktok.com/ZS5LXha1T) written in Go with 4k+ GitHub stars.
+I saw an ad on TikTok about a project called witr, [link to said TikTok video](https://vt.tiktok.com/ZS5LXha1T).
 Then I thought to myself, who is the target user? Who is that binary for? Isn't this just a bash wrapper of `ps -p`?
 
-Thus came procinfo, also see [issue 32](https://github.com/pranshuparmar/witr/issues/32).
+Thus came procinfo, turns out, _I_ am that target user. Also see [issue 32](https://github.com/pranshuparmar/witr/issues/32).
 
 ## License
 
