@@ -2,7 +2,7 @@
 
 A portable process inspector for Linux and macOS. Get details about any running process instantly!
 
-<img width="1293" height="524" alt="procinfo example" src="https://github.com/user-attachments/assets/5e912e8c-c87a-44ab-aa09-b43fc139a708" />
+<img width="695" height="582" alt="procinfo_docker" src="https://github.com/user-attachments/assets/2f43fb5a-40f3-4a5f-a3f4-15b0d30b03c3" />
 
 Also see procinfo_minimal.sh - pure sh implementation of procinfo.
 
@@ -35,27 +35,46 @@ procinfo --json nginx
 
 ## Example Output
 ```
-Target      : port 5432
+Target      : port 8000
 
-Process     : postgres (pid 1234)
-User        : postgres
-Command     : /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/15/main
-Started at  : Wed Dec 25 10:30:00 2025
-Running for : 4 days, 6 hours, 23 minutes
-RSS         : 128 MB
+Process     : com.docker.backend (pid 2398)
+User        : wenekar
+Command     : /Applications/Docker.app/Contents/MacOS/com.docker.backend services
+Started at  : Thu Dec 25 09:53:50 2025
+Running for : 6 days, 7 hours, 22 minutes, 44 seconds
+RSS Memory  : 112 MB
+Combined RSS: 141 MB (2 processes)
 
 Process tree:
-  systemd (pid 1) → postgres (pid 1234)
+  launchd (pid 1) → com.docker.backend (pid 2396) → com.docker.backend (pid 2398)
 
-Source      : systemd service
-Working Dir : /var/lib/postgresql/15/main
-Listening   : 127.0.0.1:5432
+Source      : com.docker.backend
+Working Dir : /Users/wenekar/Library/Containers/com.docker.docker/Data
+Listening   : *:15672
+              *:27017
               *:5432
-File Handles: 45 of 1024 (4%)
-Locks       : /var/lib/postgresql/15/main/postmaster.pid
+              *:5672
+              *:6379
+              *:8000
+Open files  : /Users/wenekar/.docker/.token_seed
+              /Users/wenekar/.docker/config.json
+              /Users/wenekar/.docker/contexts/meta/fe9c6bd7a66301f49ca9b6a70b217107cd1284598bfc254700c989b916da791e/meta.json
+              /Users/wenekar/.docker/daemon.json
+              /Users/wenekar/Documents/GitLab/backend/.env.docker
+Locks       : /Users/wenekar/.docker/.token_seed.lock
+              /Users/wenekar/.docker/mutagen/daemon/daemon.lock
+              /Users/wenekar/Library/Containers/com.docker.docker/backend.lock
 
-Extra info  :
-  - Process is listening on a public interface
+Docker info :
+  Container : backend-django-backend-1 (78b6e1cdc4ae)
+  Image     : backend-django-backend
+  Compose   : backend (/Users/wenekar/Documents/GitLab/backend/docker-compose.yml)
+
+Docker cheatsheet:
+  docker logs backend-django-backend-1
+  docker exec -it backend-django-backend-1 sh
+  docker top backend-django-backend-1
+  docker ps //see all containers
 ```
 
 ### Docker Container
