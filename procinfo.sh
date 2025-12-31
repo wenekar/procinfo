@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2025.12.31"
+readonly VERSION="2025.12.31.1"
 readonly PROGNAME="${0##*/}"
 
 # Colors
@@ -187,6 +187,58 @@ get_docker_info() {
         echo "ip:$container_ip"
         echo "port:$container_port"
         return
+    fi
+
+    # Linux: Check if process (or any ancestor) is running inside a container via cgroups
+    if [[ -d "/proc" ]]; then
+        command -v docker &>/dev/null || return
+
+        local check_pid=$pid
+        local cgroup_content cid
+
+        # Walk up process tree checking cgroups
+        while [[ $check_pid -gt 1 ]]; do
+            [[ -f "/proc/$check_pid/cgroup" ]] || break
+
+            cgroup_content=$(cat "/proc/$check_pid/cgroup" 2>/dev/null)
+
+            # Extract container ID from cgroup path
+            # cgroups v2: 0::/system.slice/docker-<id>.scope or 0::/docker/<id>
+            # cgroups v1: various controllers with /docker/<id> or /docker-<id>.scope
+            cid=$(echo "$cgroup_content" | sed -n 's|.*/docker[/-]\([a-f0-9]\{12,64\}\).*|\1|p' | head -1)
+
+            # Also check for containerd pattern: /system.slice/containerd-<id>.scope
+            [[ -z "$cid" ]] && cid=$(echo "$cgroup_content" | sed -n 's|.*/containerd[/-]\([a-f0-9]\{12,64\}\).*|\1|p' | head -1)
+
+            if [[ -n "$cid" ]]; then
+                # Verify this is a running Docker container
+                container_id=$(docker ps -q --no-trunc 2>/dev/null | grep "^${cid:0:12}" | head -1)
+                [[ -z "$container_id" ]] && container_id=$(docker ps -q 2>/dev/null | grep "^${cid:0:12}" | head -1)
+
+                if [[ -n "$container_id" ]]; then
+                    container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
+                    image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+                    local compose_project compose_file container_ip
+                    compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
+                    compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
+
+                    # Get container's IP address from network settings
+                    container_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_id" 2>/dev/null)
+
+                    echo "container:${container_id:0:12}"
+                    echo "name:$container_name"
+                    echo "image:$image"
+                    [[ -n "$compose_project" ]] && echo "compose:$compose_project"
+                    [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
+                    [[ -n "$container_ip" ]] && echo "ip:$container_ip"
+                    return
+                fi
+            fi
+
+            # Move to parent process
+            check_pid=$(ps -p "$check_pid" -o ppid= 2>/dev/null | tr -d ' ')
+            [[ -z "$check_pid" ]] && break
+        done
     fi
 
     # macOS: Docker Desktop uses com.docker.backend, vpnkit, etc.
@@ -384,12 +436,12 @@ get_combined_rss() {
             total = mem[root]+0
             count = (total > 0 ? 1 : 0)
             queue = children[root]
-            
+
             while (queue != "") {
                 # Pop first PID from queue
                 n = split(queue, arr, " ")
                 if (n == 0) break
-                
+
                 current = ""
                 for (i = 1; i <= n; i++) {
                     if (arr[i] == "") continue
@@ -403,13 +455,13 @@ get_combined_rss() {
                 }
                 queue = current
             }
-            
+
             if (count > 1) {
                 printf "%d MB (%d processes)\n", int(total/1024), count
             }
         }
     ')
-    
+
     echo "$result"
 }
 
