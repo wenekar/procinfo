@@ -44,14 +44,17 @@ usage() {
     printf '%s\n' "    ${PROGNAME} --port <port>"
     printf '%s\n' "    ${PROGNAME} --pid <pid>"
     printf '%s\n' "    ${PROGNAME} <name>"
+    printf '%s\n' "    ${PROGNAME} --all-ports"
     printf '\n'
     printf '%s\n' "${C_YELLOW}OPTIONS${C_RESET}"
     printf '%s\n' "    ${C_GREEN}-p${C_RESET}, ${C_GREEN}--port${C_RESET} <port>    Find process listening on port"
-    printf '%s\n' "    ${C_GREEN}-P${C_RESET}, ${C_GREEN}--pid${C_RESET} <pid>      Explain specific PID"
+    printf '%s\n' "    ${C_GREEN}-P${C_RESET}, ${C_GREEN}--pid${C_RESET} <pid>      Inspect specific PID"
+    printf '%s\n' "    ${C_GREEN}-a${C_RESET}, ${C_GREEN}--all-ports${C_RESET}      List all process PIDs of all active ports"
     printf '%s\n' "    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output"
     printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
     printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
-    printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Wait for process description (slow on macOS)"
+    printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Include descriptions (slow on macOS)"
+    printf '%s\n' "    ${C_GREEN}-V${C_RESET}, ${C_GREEN}--verbose${C_RESET}         Full width output (no truncation)"
     printf '%s\n' "    ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}           Show this help"
     printf '%s\n' "    ${C_GREEN}-v${C_RESET}, ${C_GREEN}--version${C_RESET}        Show version"
     printf '\n'
@@ -59,6 +62,7 @@ usage() {
     printf '%s\n' "    ${PROGNAME} --port ${C_MAGENTA}3306${C_RESET}"
     printf '%s\n' "    ${PROGNAME} --pid ${C_MAGENTA}1234${C_RESET}"
     printf '%s\n' "    ${PROGNAME} ${C_CYAN}nginx${C_RESET}"
+    printf '%s\n' "    ${PROGNAME} --all-ports"
     exit 0
 }
 
@@ -573,7 +577,7 @@ print_full() {
         printf '%s\n' "  ${C_DIM}docker logs $cname${C_RESET}"
         printf '%s\n' "  ${C_DIM}docker exec -it $cname sh${C_RESET}"
         printf '%s\n' "  ${C_DIM}docker top $cname${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker ps # List all containers${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker ps //see all containers${C_RESET}"
     fi
 
     if [[ -n "$warnings" ]]; then
@@ -653,8 +657,162 @@ format_etime() {
     echo "$result"
 }
 
+print_all_ports() {
+    local term_width is_macos=false show_desc=true
+    local col_pid=8 col_port=8 col_cmd col_desc=0 col_cwd col_uptime=15
+
+    [[ "$(uname)" == "Darwin" ]] && is_macos=true
+    $is_macos && ! $FULL_DESC && show_desc=false
+
+    term_width=${COLUMNS:-}
+    [[ -z "$term_width" ]] && term_width=$( (stty size </dev/tty | awk '{print $2}') 2>/dev/null )
+    [[ -z "$term_width" || "$term_width" == "0" ]] && term_width=$(tput cols 2>/dev/null)
+    [[ -z "$term_width" || "$term_width" == "0" ]] && term_width=120
+
+    # Calculate flexible column widths
+    local fixed=$((col_pid + col_port + col_uptime + 4))
+    local flex=$((term_width - fixed))
+
+    if $VERBOSE; then
+        # No truncation - just split space evenly
+        col_cmd=$((flex * 50 / 100))
+        col_cwd=$((flex - col_cmd))
+    elif $show_desc; then
+        col_cmd=$((flex * 30 / 100))
+        col_desc=$((flex * 25 / 100))
+        col_cwd=$((flex - col_cmd - col_desc))
+    else
+        # Default: COMMAND 40%, CWD 60%
+        col_cmd=$((flex * 40 / 100))
+        col_cwd=$((flex - col_cmd))
+    fi
+
+    # Minimum widths
+    [[ $col_cmd -lt 30 ]] && col_cmd=30
+    [[ $col_cwd -lt 30 ]] && col_cwd=30
+
+    # Step 1: Get port:pid pairs
+    local ports_data pids
+    ports_data=$(lsof -i -P -n 2>/dev/null | awk '/LISTEN/{
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /:\*$|:[0-9]+$/) {
+                split($i, a, ":")
+                port = a[length(a)]
+                if (port ~ /^[0-9]+$/ && !seen[port]++) print port, $2
+                break
+            }
+        }
+    }' | sort -n)
+
+    [[ -z "$ports_data" ]] && return
+
+    # Step 2: Extract unique PIDs
+    pids=$(echo "$ports_data" | awk '{p[$2]} END {for(i in p) printf "%s,",i}')
+    pids=${pids%,}
+
+    # Header
+    if $show_desc; then
+        printf "${C_BOLD}%-${col_pid}s %-${col_port}s %-${col_cmd}s %-${col_desc}s %-${col_cwd}s %s${C_RESET}\n" \
+            "PID" "PORT" "COMMAND" "DESCRIPTION" "CWD" "UPTIME"
+    else
+        printf "${C_BOLD}%-${col_pid}s %-${col_port}s %-${col_cmd}s %-${col_cwd}s %s${C_RESET}\n" \
+            "PID" "PORT" "COMMAND" "CWD" "UPTIME"
+    fi
+    printf '%*s\n' "$term_width" '' | tr ' ' '─'
+
+    # Step 3: Get CWD - use /proc on Linux (faster), lsof on macOS
+    local cwd_data=""
+    if [[ -d /proc ]]; then
+        for p in ${pids//,/ }; do
+            local d=$(readlink -f "/proc/$p/cwd" 2>/dev/null)
+            [[ -n "$d" ]] && cwd_data+="$p $d"$'\n'
+        done
+    else
+        cwd_data=$(lsof -p "$pids" 2>/dev/null | awk '$4=="cwd" && $9!="" {print $2, $9}')
+    fi
+
+    # Step 4: Join using process substitution
+    # Note: COLUMNS=9999 forces ps to not truncate output on macOS
+    awk -v col_pid="$col_pid" -v col_port="$col_port" -v col_cmd="$col_cmd" \
+        -v col_cwd="$col_cwd" -v col_desc="$col_desc" -v show_desc="$show_desc" \
+        -v verbose="$VERBOSE" \
+        -v c_green="$C_GREEN" -v c_dim="$C_DIM" -v c_blue="$C_BLUE" \
+        -v c_yellow="$C_YELLOW" -v c_reset="$C_RESET" '
+    function smart_truncate(str, maxlen,    sp, exe, args, exe_max, args_max, s, e) {
+        if (length(str) <= maxlen) return str
+
+        # Find first space (separates executable from args)
+        sp = index(str, " ")
+
+        if (sp == 0) {
+            # No args - show 40% start, 60% end
+            s = int((maxlen - 3) * 0.4)
+            e = maxlen - 3 - s
+            return substr(str, 1, s) "..." substr(str, length(str) - e + 1)
+        }
+
+        exe = substr(str, 1, sp - 1)
+        args = substr(str, sp + 1)
+
+        # Give 45% to exe, 55% to args
+        exe_max = int((maxlen - 4) * 0.45)
+        args_max = maxlen - exe_max - 4
+
+        # For exe: show 35% start, 65% end (preserve command name)
+        if (length(exe) > exe_max) {
+            s = int((exe_max - 3) * 0.35)
+            e = exe_max - 3 - s
+            exe = substr(exe, 1, s) "..." substr(exe, length(exe) - e + 1)
+        }
+
+        # For args: show end only
+        if (length(args) > args_max) {
+            args = "..." substr(args, length(args) - args_max + 4)
+        }
+
+        return exe " " args
+    }
+
+    /^---PS---$/ { mode="ps"; next }
+    /^---CWD---$/ { mode="cwd"; next }
+    /^---PORTS---$/ { mode="ports"; next }
+    mode=="ps" && /^[0-9]/ {
+        pid = $1
+        etime[pid] = $2
+        # Build full command (everything from $3 onwards)
+        cmd = ""
+        for (i = 3; i <= NF; i++) cmd = cmd (cmd ? " " : "") $i
+        fullcmd[pid] = cmd
+        next
+    }
+    mode=="cwd" && NF>=2 { cwd[$1]=$2; next }
+    mode=="ports" {
+        port = $1; pid = $2
+        if (!(pid in fullcmd)) next
+
+        c = fullcmd[pid]; e = etime[pid]
+        d = (pid in cwd) ? cwd[pid] : "-"
+
+        if (verbose != "true") {
+            c = smart_truncate(c, col_cmd)
+            if (length(d) > col_cwd) d = "..." substr(d, length(d)-col_cwd+4)
+        }
+
+        if (show_desc == "true") {
+            printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_desc "s%s %s%-" col_cwd "s%s %s%s%s\n", \
+                pid, port, c_green, c, c_reset, c_dim, "", c_reset, c_blue, d, c_reset, c_yellow, e, c_reset
+        } else {
+            printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_cwd "s%s %s%s%s\n", \
+                pid, port, c_green, c, c_reset, c_blue, d, c_reset, c_yellow, e, c_reset
+        }
+    }
+    ' <(echo "---PS---"; ps -ww -p "$pids" -o pid=,etime=,command= 2>/dev/null) \
+      <(echo "---CWD---"; echo "$cwd_data") \
+      <(echo "---PORTS---"; echo "$ports_data")
+}
+
 main() {
-    local port="" pid="" name="" short=false json=false target=""
+    local port="" pid="" name="" short=false json=false all_ports=false target=""
 
     [[ $# -eq 0 ]] && { setup_colors; usage; }
 
@@ -662,11 +820,12 @@ main() {
         case $1 in
             -p|--port)    port="${2:-}"; shift 2 || die "--port requires an argument" ;;
             -P|--pid)     pid="${2:-}"; shift 2 || die "--pid requires an argument" ;;
+            -a|--all-ports) all_ports=true; shift ;;
             -s|--short)   short=true; shift ;;
             -j|--json)    json=true; shift ;;
             --no-color)   NO_COLOR=1; shift ;;
             -d|--description) FULL_DESC=true; shift ;;
-            -vv|--verbose) VERBOSE=true; shift ;;
+            -V|--verbose) VERBOSE=true; shift ;;
             -h|--help)    setup_colors; usage ;;
             -v|--version) echo "$PROGNAME $VERSION"; exit 0 ;;
             -*)           setup_colors; die "unknown option: $1" ;;
@@ -679,6 +838,11 @@ main() {
     for cmd in lsof ps pgrep; do
         command -v "$cmd" &>/dev/null || die "missing dependency: $cmd"
     done
+
+    if $all_ports; then
+        print_all_ports
+        exit 0
+    fi
 
     if [[ -n "$port" ]]; then
         pid=$(get_pid_by_port "$port")
