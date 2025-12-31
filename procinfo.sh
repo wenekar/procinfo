@@ -296,7 +296,24 @@ get_source() {
         pm2)               echo "pm2" ;;
         supervisord)       echo "supervisor" ;;
         cron|crond)        echo "cron" ;;
-        sshd)              echo "ssh session" ;;
+        sshd)
+            local client_ip=""
+            if [[ -r "/proc/$pid/environ" ]]; then
+                local env_data
+                env_data=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)
+                client_ip=$(echo "$env_data" | grep "^SSH_CONNECTION=" | sed 's/^SSH_CONNECTION=//' | awk '{print $1}')
+                # SSH Client fallback
+                if [[ -z "$client_ip" ]]; then
+                    client_ip=$(echo "$env_data" | grep "^SSH_CLIENT=" | sed 's/^SSH_CLIENT=//' | awk '{print $1}')
+                fi
+            fi
+
+            if [[ -n "$client_ip" ]]; then
+                echo "ssh session (from $client_ip)"
+            else
+                echo "ssh session"
+            fi
+            ;;
         tmux*|screen)      echo "terminal multiplexer" ;;
         bash|zsh|fish|sh|dash) echo "interactive $pcomm shell" ;;
         init)              echo "init system" ;;
