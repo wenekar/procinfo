@@ -408,11 +408,42 @@ print_json() {
     command -v jq &>/dev/null || die "--json requires jq"
 
     local pid=$1 target=$2
-    local listen cwd source
+    local listen cwd source desc combined_rss git_info docker_info
 
+    desc=$(get_whatis "$PROC_COMM")
+    combined_rss=$(get_combined_rss "$pid")
+    git_info=$(get_git_info "$pid")
     listen=$(get_listen_ports)
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
+    docker_info=$(get_docker_info "$pid" "$target")
+
+    # Build docker object if present
+    local docker_json="null"
+    if [[ -n "$docker_info" ]]; then
+        local cid cname cimage cip cport
+        cid=$(echo "$docker_info" | grep '^container:' | cut -d: -f2)
+        cname=$(echo "$docker_info" | grep '^name:' | cut -d: -f2)
+        cimage=$(echo "$docker_info" | grep '^image:' | cut -d: -f2)
+        cip=$(echo "$docker_info" | grep '^ip:' | cut -d: -f2)
+        cport=$(echo "$docker_info" | grep '^port:' | cut -d: -f2)
+
+        if [[ -n "$cip" && -n "$cport" ]]; then
+            docker_json=$(jq -n \
+                --arg id "$cid" \
+                --arg name "$cname" \
+                --arg image "$cimage" \
+                --arg ip "$cip" \
+                --arg port "$cport" \
+                '{id: $id, name: $name, image: $image, internal_ip: $ip, internal_port: ($port|tonumber)}')
+        else
+            docker_json=$(jq -n \
+                --arg id "$cid" \
+                --arg name "$cname" \
+                --arg image "$cimage" \
+                '{id: $id, name: $name, image: $image}')
+        fi
+    fi
 
     jq -n \
         --arg target "$target" \
@@ -420,27 +451,36 @@ print_json() {
         --arg pid "$pid" \
         --arg user "$PROC_USER" \
         --arg command "$PROC_ARGS" \
-        --arg started "$PROC_ETIME" \
+        --arg started_at "$PROC_LSTART" \
+        --arg running_for "$(format_etime "$PROC_ETIME")" \
         --arg rss_mb "$((PROC_RSS / 1024))" \
+        --arg combined_rss "$combined_rss" \
+        --arg desc "$desc" \
         --arg chain "$(build_chain "$pid")" \
         --arg cwd "$cwd" \
         --arg source "$source" \
+        --arg git_info "$git_info" \
         --arg file_handles "$(get_file_handles "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
         --argjson locks "$(get_locks | jq -R . | jq -s .)" \
         --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
+        --argjson docker "$docker_json" \
         '{
             target: $target,
-            process: { name: $comm, pid: ($pid|tonumber), user: $user },
+            process: { name: $comm, pid: ($pid|tonumber), user: $user, description: $desc },
             command: $command,
-            started: $started,
+            started_at: $started_at,
+            running_for: $running_for,
             rss_mb: ($rss_mb|tonumber),
+            combined_rss: $combined_rss,
             chain: $chain,
             working_dir: $cwd,
             source: $source,
+            git_info: $git_info,
             file_handles: $file_handles,
             listening: $listening,
             locks: $locks,
+            docker: $docker,
             warnings: $warnings
         }'
 }
