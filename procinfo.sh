@@ -356,45 +356,49 @@ get_source() {
 
 get_combined_rss() {
     local pid=$1
-    local total=0 count=0 child_rss
+    local result
 
-    # Self
-    total=$PROC_RSS
-    count=1
-
-    # Get all descendants - collect PIDs first
-    local children
-    children=$(pgrep -P "$pid" 2>/dev/null)
-
-    if [[ -n "$children" ]]; then
-        # Recursively collect all descendant PIDs
-        local all_descendants=""
-        local to_check="$children"
-
-        while [[ -n "$to_check" ]]; do
-            all_descendants+=" $to_check"
-            local next_level=""
-            for c in $to_check; do
-                local grandchildren
-                grandchildren=$(pgrep -P "$c" 2>/dev/null)
-                [[ -n "$grandchildren" ]] && next_level+=" $grandchildren"
-            done
-            to_check="$next_level"
-        done
-
-        # Single ps call for all descendants' RSS
-        if [[ -n "$all_descendants" ]]; then
-            local pids_csv
-            pids_csv=$(echo $all_descendants | tr ' ' ',' | sed 's/^,//')
-            while read -r child_rss; do
-                [[ -n "$child_rss" && "$child_rss" =~ ^[0-9]+$ ]] && total=$((total + child_rss)) && ((count++))
-            done < <(ps -p "$pids_csv" -o rss= 2>/dev/null)
-        fi
-    fi
-
-    if [[ $count -gt 1 ]]; then
-        echo "$((total / 1024)) MB ($count processes)"
-    fi
+    # Single ps call: get all processes with pid, ppid, rss
+    # Let awk traverse the tree and sum RSS
+    result=$(ps -A -o pid=,ppid=,rss= 2>/dev/null | awk -v root="$pid" '
+        {
+            # Build parent->children map and store RSS
+            p = $1+0; pp = $2+0; rss = $3+0
+            children[pp] = children[pp] " " p
+            mem[p] = rss
+        }
+        END {
+            # BFS from root to find all descendants
+            total = mem[root]+0
+            count = (total > 0 ? 1 : 0)
+            queue = children[root]
+            
+            while (queue != "") {
+                # Pop first PID from queue
+                n = split(queue, arr, " ")
+                if (n == 0) break
+                
+                current = ""
+                for (i = 1; i <= n; i++) {
+                    if (arr[i] == "") continue
+                    p = arr[i]+0
+                    if (p > 0 && !visited[p]) {
+                        visited[p] = 1
+                        total += mem[p]
+                        count++
+                        current = current " " children[p]
+                    }
+                }
+                queue = current
+            }
+            
+            if (count > 1) {
+                printf "%d MB (%d processes)\n", int(total/1024), count
+            }
+        }
+    ')
+    
+    echo "$result"
 }
 
 get_git_info() {
