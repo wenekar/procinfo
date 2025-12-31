@@ -749,87 +749,67 @@ print_all_ports() {
         done <<< "$cmds"
     fi
 
-    # Step 6: Join and print
-    awk -v col_pid="$col_pid" -v col_port="$col_port" -v col_cmd="$col_cmd" \
+    # Step 6: Join and print via pipe
+    {
+        echo "---PS---"
+        echo "$ps_data"
+        echo "---CWD---"
+        echo "$cwd_data"
+        echo "---DESC---"
+        echo "$desc_data"
+        echo "---PORTS---"
+        echo "$ports_data"
+    } | awk -v col_pid="$col_pid" -v col_port="$col_port" -v col_cmd="$col_cmd" \
         -v col_cwd="$col_cwd" -v col_desc="$col_desc" -v show_desc="$show_desc" \
         -v verbose="$VERBOSE" \
         -v c_green="$C_GREEN" -v c_dim="$C_DIM" -v c_blue="$C_BLUE" \
         -v c_yellow="$C_YELLOW" -v c_reset="$C_RESET" '
     function smart_truncate(str, maxlen,    sp, exe, args, exe_max, args_max, s, e) {
         if (length(str) <= maxlen) return str
-
-        # Find first space (separates executable from args)
         sp = index(str, " ")
-
         if (sp == 0) {
-            # No args - show 40% start, 60% end
             s = int((maxlen - 3) * 0.4)
             e = maxlen - 3 - s
             return substr(str, 1, s) "..." substr(str, length(str) - e + 1)
         }
-
         exe = substr(str, 1, sp - 1)
         args = substr(str, sp + 1)
-
-        # Give 45% to exe, 55% to args
         exe_max = int((maxlen - 4) * 0.45)
         args_max = maxlen - exe_max - 4
-
-        # For exe: show 35% start, 65% end (preserve command name)
         if (length(exe) > exe_max) {
             s = int((exe_max - 3) * 0.35)
             e = exe_max - 3 - s
             exe = substr(exe, 1, s) "..." substr(exe, length(exe) - e + 1)
         }
-
-        # For args: show end only
         if (length(args) > args_max) {
             args = "..." substr(args, length(args) - args_max + 4)
         }
-
         return exe " " args
     }
-
     /^---PS---$/ { mode="ps"; next }
     /^---CWD---$/ { mode="cwd"; next }
     /^---DESC---$/ { mode="desc"; next }
     /^---PORTS---$/ { mode="ports"; next }
-    mode=="ps" && /^[0-9]/ {
-        pid = $1
-        etime[pid] = $2
-        # Build full command (everything from $3 onwards)
-        cmd = ""
-        for (i = 3; i <= NF; i++) cmd = cmd (cmd ? " " : "") $i
+    mode=="ps" && /^[[:space:]]*[0-9]/ {
+        pid = $1; etime[pid] = $2
+        cmd = ""; for (i = 3; i <= NF; i++) cmd = cmd (cmd ? " " : "") $i
         fullcmd[pid] = cmd
-        # Extract basename for description lookup
-        exe = $3
-        n = split(exe, parts, "/")
-        cmdbase[pid] = parts[n]
+        exe = $3; n = split(exe, parts, "/"); cmdbase[pid] = parts[n]
         next
     }
     mode=="cwd" && NF>=2 { cwd[$1]=$2; next }
-    mode=="desc" && NF>=2 {
-        # basename description...
-        bn = $1
-        $1 = ""
-        sub(/^ */, "")
-        desc[bn] = $0
-        next
-    }
+    mode=="desc" && NF>=2 { bn=$1; $1=""; sub(/^ */, ""); desc[bn]=$0; next }
     mode=="ports" {
         port = $1; pid = $2
         if (!(pid in fullcmd)) next
-
         c = fullcmd[pid]; e = etime[pid]
         cw = (pid in cwd) ? cwd[pid] : "-"
         ds = (cmdbase[pid] in desc) ? desc[cmdbase[pid]] : ""
-
         if (verbose != "true") {
             c = smart_truncate(c, col_cmd)
             if (length(cw) > col_cwd) cw = "..." substr(cw, length(cw)-col_cwd+4)
             if (length(ds) > col_desc) ds = substr(ds, 1, col_desc-3) "..."
         }
-
         if (show_desc == "true") {
             printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_desc "s%s %s%-" col_cwd "s%s %s%s%s\n", \
                 pid, port, c_green, c, c_reset, c_dim, ds, c_reset, c_blue, cw, c_reset, c_yellow, e, c_reset
@@ -837,17 +817,7 @@ print_all_ports() {
             printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_cwd "s%s %s%s%s\n", \
                 pid, port, c_green, c, c_reset, c_blue, cw, c_reset, c_yellow, e, c_reset
         }
-    }
-    ' <<EOF
----PS---
-$ps_data
----CWD---
-$cwd_data
----DESC---
-$desc_data
----PORTS---
-$ports_data
-EOF
+    }'
 }
 
 main() {
