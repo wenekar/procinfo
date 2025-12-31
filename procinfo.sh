@@ -718,7 +718,7 @@ print_all_ports() {
         printf "${C_BOLD}%-${col_pid}s %-${col_port}s %-${col_cmd}s %-${col_cwd}s %s${C_RESET}\n" \
             "PID" "PORT" "COMMAND" "CWD" "UPTIME"
     fi
-    printf '%*s\n' "$term_width" '' | tr ' ' '─'
+    printf '%*s\n' "$term_width" '' | sed 's/ /─/g'
 
     # Step 3: Get CWD - use /proc on Linux (faster), lsof on macOS
     local cwd_data=""
@@ -731,8 +731,25 @@ print_all_ports() {
         cwd_data=$(lsof -p "$pids" 2>/dev/null | awk '$4=="cwd" && $9!="" {print $2, $9}')
     fi
 
-    # Step 4: Join using process substitution
-    # Note: COLUMNS=9999 forces ps to not truncate output on macOS
+    # Step 4: Get ps data
+    local ps_data
+    ps_data=$(ps -ww -p "$pids" -o pid=,etime=,command= 2>/dev/null)
+
+    # Step 5: Get descriptions if requested (slow - calls whatis for each unique command)
+    local desc_data=""
+    if $show_desc; then
+        local cmds
+        cmds=$(echo "$ps_data" | awk '{print $3}' | sort -u)
+        while IFS= read -r cmd; do
+            [[ -z "$cmd" ]] && continue
+            local basename=${cmd##*/}
+            local desc
+            desc=$(whatis "$basename" 2>/dev/null | head -1 | sed 's/.*- //' | cut -c1-60)
+            [[ -n "$desc" ]] && desc_data+="$basename $desc"$'\n'
+        done <<< "$cmds"
+    fi
+
+    # Step 6: Join and print
     awk -v col_pid="$col_pid" -v col_port="$col_port" -v col_cmd="$col_cmd" \
         -v col_cwd="$col_cwd" -v col_desc="$col_desc" -v show_desc="$show_desc" \
         -v verbose="$VERBOSE" \
@@ -775,6 +792,7 @@ print_all_ports() {
 
     /^---PS---$/ { mode="ps"; next }
     /^---CWD---$/ { mode="cwd"; next }
+    /^---DESC---$/ { mode="desc"; next }
     /^---PORTS---$/ { mode="ports"; next }
     mode=="ps" && /^[0-9]/ {
         pid = $1
@@ -783,32 +801,53 @@ print_all_ports() {
         cmd = ""
         for (i = 3; i <= NF; i++) cmd = cmd (cmd ? " " : "") $i
         fullcmd[pid] = cmd
+        # Extract basename for description lookup
+        exe = $3
+        n = split(exe, parts, "/")
+        cmdbase[pid] = parts[n]
         next
     }
     mode=="cwd" && NF>=2 { cwd[$1]=$2; next }
+    mode=="desc" && NF>=2 {
+        # basename description...
+        bn = $1
+        $1 = ""
+        sub(/^ */, "")
+        desc[bn] = $0
+        next
+    }
     mode=="ports" {
         port = $1; pid = $2
         if (!(pid in fullcmd)) next
 
         c = fullcmd[pid]; e = etime[pid]
-        d = (pid in cwd) ? cwd[pid] : "-"
+        cw = (pid in cwd) ? cwd[pid] : "-"
+        ds = (cmdbase[pid] in desc) ? desc[cmdbase[pid]] : ""
 
         if (verbose != "true") {
             c = smart_truncate(c, col_cmd)
-            if (length(d) > col_cwd) d = "..." substr(d, length(d)-col_cwd+4)
+            if (length(cw) > col_cwd) cw = "..." substr(cw, length(cw)-col_cwd+4)
+            if (length(ds) > col_desc) ds = substr(ds, 1, col_desc-3) "..."
         }
 
         if (show_desc == "true") {
             printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_desc "s%s %s%-" col_cwd "s%s %s%s%s\n", \
-                pid, port, c_green, c, c_reset, c_dim, "", c_reset, c_blue, d, c_reset, c_yellow, e, c_reset
+                pid, port, c_green, c, c_reset, c_dim, ds, c_reset, c_blue, cw, c_reset, c_yellow, e, c_reset
         } else {
             printf "%-" col_pid "s %-" col_port "s %s%-" col_cmd "s%s %s%-" col_cwd "s%s %s%s%s\n", \
-                pid, port, c_green, c, c_reset, c_blue, d, c_reset, c_yellow, e, c_reset
+                pid, port, c_green, c, c_reset, c_blue, cw, c_reset, c_yellow, e, c_reset
         }
     }
-    ' <(echo "---PS---"; ps -ww -p "$pids" -o pid=,etime=,command= 2>/dev/null) \
-      <(echo "---CWD---"; echo "$cwd_data") \
-      <(echo "---PORTS---"; echo "$ports_data")
+    ' <<EOF
+---PS---
+$ps_data
+---CWD---
+$cwd_data
+---DESC---
+$desc_data
+---PORTS---
+$ports_data
+EOF
 }
 
 main() {
