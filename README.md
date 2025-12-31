@@ -13,7 +13,7 @@ chmod +x procinfo
 sudo mv procinfo /usr/local/bin/
 ```
 
-Or just copy the script. It's ~490 lines of bash with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`).
+Or just copy the script. It's ~675 lines of bash with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`).
 
 ## Usage
 ```bash
@@ -44,26 +44,47 @@ Started at  : Wed Dec 25 10:30:00 2025
 Running for : 4 days, 6 hours, 23 minutes
 RSS         : 128 MB
 
-Why It Exists :
+Process tree:
   systemd (pid 1) → postgres (pid 1234)
 
 Source      : systemd service
 Working Dir : /var/lib/postgresql/15/main
 Listening   : 127.0.0.1:5432
               *:5432
-Open Files  : 45 of 1024 (4%)
+File Handles: 45 of 1024 (4%)
 Locks       : /var/lib/postgresql/15/main/postmaster.pid
 
 Extra info  :
   - Process is listening on a public interface
 ```
 
+### Docker Container
+When inspecting a port bound to a Docker container:
+```
+Target      : port 6379
+
+Process     : docker-proxy (pid 5678)
+...
+
+Docker info :
+  Container : my-redis (abc123def456)
+  Image     : redis:alpine
+  Internal  : 172.17.0.2:6379
+
+Docker cheatsheet:
+  docker logs my-redis
+  docker exec -it my-redis sh
+  docker top my-redis
+  docker ps //see all containers
+```
+
 ## Features
 
 - **Cross-platform** - Works on Linux and macOS
 - **Zero dependencies** - Just bash and standard Unix tools
-- **Process ancestry** - Shows the full chain of how a process came to exist
+- **Process ancestry** - Shows the full chain of how a process came to exist (including systemd.service files if found)
 - **Source detection** - Identifies systemd, launchd, Docker, pm2, cron, SSH, etc.
+- **Docker awareness** - Detects containers behind port bindings, shows image and helpful commands
 - **Network info** - Shows all listening ports for a process
 - **Lock detection** - Shows lock files held by the process
 - **Multiple formats** - Human-readable, short one-liner, or JSON
@@ -77,6 +98,7 @@ Extra info  :
 | `-P, --pid <pid>` | Inspect specific PID |
 | `-s, --short` | One-line output (just the process chain) |
 | `-j, --json` | JSON output (requires jq) |
+| `-d, --description` | Wait for process description (slow on macOS) |
 | `--no-color` | Disable colored output |
 | `-h, --help` | Show help |
 | `-v, --version` | Show version |

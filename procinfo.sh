@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2025.12.30"
+readonly VERSION="2025.12.31"
 readonly PROGNAME="${0##*/}"
 
 # Colors
@@ -145,24 +145,58 @@ get_listen_ports() {
 }
 
 get_docker_info() {
-    local pid=$1
+    local pid=$1 target=$2
+    local container_id container_name image
 
-    # Only for docker-proxy
-    [[ "$PROC_COMM" != "docker-proxy" ]] && return
+    # Linux: docker-proxy has container info in its args
+    if [[ "$PROC_COMM" == "docker-proxy" ]]; then
+        local container_ip container_port
 
-    local container_ip container_port container_id container_name image
+        # Parse args - POSIX compatible (no grep -P)
+        container_ip=$(echo "$PROC_ARGS" | sed -n 's/.*-container-ip \([0-9.]*\).*/\1/p')
+        container_port=$(echo "$PROC_ARGS" | sed -n 's/.*-container-port \([0-9]*\).*/\1/p')
 
-    container_ip=$(echo "$PROC_ARGS" | grep -oP '(?<=-container-ip )[0-9.]+')
-    container_port=$(echo "$PROC_ARGS" | grep -oP '(?<=-container-port )[0-9]+')
+        # Find container by IP on bridge network
+        container_id=$(docker network inspect bridge -f '{{range .Containers}}{{if eq .IPv4Address "'"$container_ip"'/16"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
 
-    # Find container by IP
-    container_id=$(docker network inspect bridge -f '{{range .Containers}}{{if eq .IPv4Address "'"$container_ip"'/16"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
+        # Fallback: find by port mapping
+        if [[ -z "$container_id" ]]; then
+            container_id=$(docker ps --filter "publish=$container_port" -q 2>/dev/null | head -1)
+        fi
 
-    # Fallback: find by port mapping
-    if [[ -z "$container_id" ]]; then
-        container_id=$(docker ps --filter "publish=$container_port" -q 2>/dev/null | head -1)
+        [[ -z "$container_id" ]] && return
+
+        container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
+        image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+
+        echo "container:$container_id"
+        echo "name:$container_name"
+        echo "image:$image"
+        echo "ip:$container_ip"
+        echo "port:$container_port"
+        return
     fi
 
+    # macOS: Docker Desktop uses com.docker.backend, vpnkit, etc.
+    command -v docker &>/dev/null || return
+
+    case "$PROC_COMM" in
+        com.docker*|vpnkit*|Docker*) ;;
+        *) return ;;
+    esac
+
+    # Extract port from target if queried by port (e.g., "port 5432")
+    local query_port
+    if [[ "$target" == "port "* ]]; then
+        query_port="${target#port }"
+    else
+        # Fallback: try first listening port
+        query_port=$(get_listen_ports | sed -n 's/.*:\([0-9]*\)$/\1/p' | head -1)
+    fi
+    [[ -z "$query_port" ]] && return
+
+    # Find container publishing this port
+    container_id=$(docker ps --filter "publish=$query_port" -q 2>/dev/null | head -1)
     [[ -z "$container_id" ]] && return
 
     container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
@@ -171,8 +205,6 @@ get_docker_info() {
     echo "container:$container_id"
     echo "name:$container_name"
     echo "image:$image"
-    echo "ip:$container_ip"
-    echo "port:$container_port"
 }
 
 get_file_handles() {
@@ -442,7 +474,7 @@ print_full() {
     listen=$(get_listen_ports)
     locks=$(get_locks)
     warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
-    docker_info=$(get_docker_info "$pid")
+    docker_info=$(get_docker_info "$pid" "$target")
 
     printf '%s\n' "${C_CYAN}Target${C_RESET}      : ${C_WHITE}$target${C_RESET}"
     printf '\n'
@@ -493,13 +525,14 @@ print_full() {
 
         printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
         printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
+        [[ -n "$cip" && -n "$cport" ]] && \
         printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
         printf '\n'
         printf '%s\n' "${C_DIM}Docker cheatsheet:${C_RESET}"
         printf '%s\n' "  ${C_DIM}docker logs $cname${C_RESET}"
         printf '%s\n' "  ${C_DIM}docker exec -it $cname sh${C_RESET}"
         printf '%s\n' "  ${C_DIM}docker top $cname${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker ps //see all containers${C_RESET}"
+        printf '%s\n' "  ${C_DIM}docker ps # List all containers${C_RESET}"
     fi
 
     if [[ -n "$warnings" ]]; then
