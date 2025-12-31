@@ -26,6 +26,7 @@ Or just copy the script. It's a bash script with no dependencies beyond standard
 - **git integration** - Does the process belong to a git repo? See the branch, and remote URL directly in the output.
 - **Docker aware** - Detects containers, composes, container-id, image name, port bindings... May add more info later.
 - **Network info** - Shows all listening ports for a process.
+- **Port list** - Pretty ss -tunlp output for everyone!
 - **Lock detection** - Shows lock files and open files of the process.
 - **Multiple formats** - Human-readable, short one-liner, or JSON
 - **Case-insensitive** - `procinfo nginx` matches `Nginx`, `NGINX`, etc.
