@@ -13,7 +13,7 @@ chmod +x procinfo
 sudo mv procinfo /usr/local/bin/
 ```
 
-Or just copy the script. It's ~675 lines of bash with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`).
+Or just copy the script. It's a bash script with no dependencies beyond standard Unix tools (`ps`, `lsof`, `pgrep`). Or better yet, copy parts of it, combine them, make one script that satisfies your specific needs!
 
 ## Usage
 ```bash
