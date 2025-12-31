@@ -19,6 +19,7 @@ PROC_USER="" PROC_COMM="" PROC_RSS="" PROC_ETIME="" PROC_PPID="" PROC_LSTART="" 
 LSOF_OUTPUT=""
 FULL_DESC=false
 VERBOSE=false
+SHOW_ENV=false
 
 setup_colors() {
     if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
@@ -54,6 +55,7 @@ usage() {
     printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
     printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
     printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Include descriptions (slow on macOS)"
+    printf '%s\n' "    ${C_GREEN}-e${C_RESET}, ${C_GREEN}--env${C_RESET}            Show environment variables"
     printf '%s\n' "    ${C_GREEN}-V${C_RESET}, ${C_GREEN}--verbose${C_RESET}         Full width output (no truncation)"
     printf '%s\n' "    ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}           Show this help"
     printf '%s\n' "    ${C_GREEN}-v${C_RESET}, ${C_GREEN}--version${C_RESET}        Show version"
@@ -446,6 +448,27 @@ get_git_info() {
     done
 }
 
+get_env() {
+    local pid=$1
+
+    $SHOW_ENV || $VERBOSE || return
+
+    # Linux: read from /proc
+    if [[ -r "/proc/$pid/environ" ]]; then
+        tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null
+        return
+    fi
+
+    # macOS: use ps -E (limited, may require elevated perms)
+    local output
+    output=$(ps -p "$pid" -E -ww -o command= 2>/dev/null)
+    [[ -z "$output" ]] && return
+
+    echo "$output" | tr ' ' '\n' | awk -F= '
+        /^[A-Za-z_][A-Za-z0-9_]*=/ { print }
+    '
+}
+
 collect_warnings() {
     local pid=$1 user=$2 rss=$3 listen=$4
 
@@ -525,6 +548,7 @@ print_json() {
         --argjson locked_files "$(get_locked_files | jq -R . | jq -s .)" \
         --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
         --argjson docker "$docker_json" \
+        --argjson environment "$(get_env "$pid" | jq -R . | jq -s .)" \
         '{
             target: $target,
             process: { name: $comm, pid: ($pid|tonumber), user: $user, description: $desc },
@@ -542,6 +566,7 @@ print_json() {
             listening: $listening,
             locks: $locks,
             docker: $docker,
+            environment: $environment,
             warnings: $warnings
         }'
 }
@@ -654,6 +679,18 @@ print_full() {
     if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || "$file_handles" == "0"* ) ]]; then
         printf '\n'
         printf '%s\n' "${C_DIM}Note: Some info may be hidden due to permissions. Try sudo for full details.${C_RESET}"
+    fi
+
+    if $SHOW_ENV; then
+        local env_vars
+        env_vars=$(get_env "$pid")
+        if [[ -n "$env_vars" ]]; then
+            printf '\n'
+            printf '%s\n' "${C_CYAN}Environment${C_RESET} :"
+            echo "$env_vars" | while IFS= read -r var; do
+                printf '%s\n' "  ${C_DIM}$var${C_RESET}"
+            done
+        fi
     fi
 }
 
@@ -897,6 +934,7 @@ main() {
             -j|--json)    json=true; shift ;;
             --no-color)   NO_COLOR=1; shift ;;
             -d|--description) FULL_DESC=true; shift ;;
+            -e|--env) SHOW_ENV=true; shift ;;
             -V|--verbose) VERBOSE=true; shift ;;
             -h|--help)    setup_colors; usage ;;
             -v|--version) echo "$PROGNAME $VERSION"; exit 0 ;;
