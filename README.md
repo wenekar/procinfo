@@ -47,6 +47,7 @@ Optional dependencies:
 - systemctl
 - whatis (included with man)
 - jq (json output support)
+- fzf (TUI mode)
 
 procinfo_minimal:
 - sh
