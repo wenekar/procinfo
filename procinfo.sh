@@ -634,7 +634,6 @@ print_json() {
             open_files: $open_files,
             locked_files: $locked_files,
             listening: $listening,
-            locks: $locks,
             docker: $docker,
             environment: $environment,
             warnings: $warnings
