@@ -52,6 +52,9 @@ procinfo_minimal:
 
 ## Usage
 ```bash
+# Interactive TUI mode (requires fzf)
+procinfo --tui
+
 # By process name
 procinfo nginx
 
@@ -128,6 +131,8 @@ Docker cheatsheet:
 |--------|-------------|
 | `-p, --port <port>` | Find process listening on port |
 | `-P, --pid <pid>` | Inspect specific PID |
+| `-a, --all-ports` | List all listening ports |
+| `-t, --tui` | Interactive TUI mode (requires fzf) |
 | `-s, --short` | One-line output (just the process chain) |
 | `-j, --json` | JSON output (requires jq) |
 | `-d, --description` | Wait for process description (slow on macOS) |

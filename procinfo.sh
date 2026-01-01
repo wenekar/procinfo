@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2026.01.01"
+readonly VERSION="2026.01.02"
 readonly PROGNAME="${0##*/}"
 
 # Colors
@@ -51,6 +51,7 @@ usage() {
     printf '%s\n' "    ${C_GREEN}-p${C_RESET}, ${C_GREEN}--port${C_RESET} <port>    Find process listening on port"
     printf '%s\n' "    ${C_GREEN}-P${C_RESET}, ${C_GREEN}--pid${C_RESET} <pid>      Inspect specific PID"
     printf '%s\n' "    ${C_GREEN}-a${C_RESET}, ${C_GREEN}--all-ports${C_RESET}      List all process PIDs of all active ports"
+    printf '%s\n' "    ${C_GREEN}-t${C_RESET}, ${C_GREEN}--tui${C_RESET}            Interactive TUI mode (requires fzf)"
     printf '%s\n' "    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output"
     printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
     printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
@@ -65,6 +66,7 @@ usage() {
     printf '%s\n' "    ${PROGNAME} --pid ${C_MAGENTA}1234${C_RESET}"
     printf '%s\n' "    ${PROGNAME} ${C_CYAN}nginx${C_RESET}"
     printf '%s\n' "    ${PROGNAME} --all-ports"
+    printf '%s\n' "    ${PROGNAME} --tui"
     exit 0
 }
 
@@ -855,12 +857,12 @@ print_all_ports() {
         col_cmd=$((flex * 50 / 100))
         col_cwd=$((flex - col_cmd))
     elif $show_desc; then
-        col_cmd=$((flex * 30 / 100))
+        col_cmd=$((flex * 50 / 100))
         col_desc=$((flex * 25 / 100))
         col_cwd=$((flex - col_cmd - col_desc))
     else
-        # Default: COMMAND 40%, CWD 60%
-        col_cmd=$((flex * 40 / 100))
+        # Default: COMMAND 60%, CWD 40%
+        col_cmd=$((flex * 60 / 100))
         col_cwd=$((flex - col_cmd))
     fi
 
@@ -895,8 +897,13 @@ print_all_ports() {
         printf "${C_BOLD}%-${col_pid}s %-${col_port}s %-${col_cmd}s %-${col_cwd}s %s${C_RESET}\n" \
             "PID" "PORT" "COMMAND" "CWD" "UPTIME"
     fi
-    printf '%*s\n' "$term_width" '' | sed 's/ /─/g'
-
+    printf -v _line '%*s' "$term_width" ''
+    printf '%s\n' "${_line// /─}"
+    if [[ $EUID -ne 0 ]]; then
+        printf '%s\n' "${C_DIM}(some processes may be hidden - run with sudo for full list)${C_RESET}"
+    else
+        printf '\n'
+    fi
     # Step 3: Get CWD - use /proc on Linux (faster), lsof on macOS
     local cwd_data=""
     if [[ -d /proc ]]; then
@@ -997,13 +1004,27 @@ print_all_ports() {
     }'
 }
 
+run_tui() {
+    command -v fzf &>/dev/null || die "fzf required for --tui (https://github.com/junegunn/fzf)"
+    fzf --ansi --layout=reverse --header-lines=3 \
+        --clear \
+        --preview "$0 --pid {1}" \
+        --preview-window 'down,50%,wrap' \
+        --bind "focus:transform:echo change-preview-window:down:\$($0 --pid {1} 2>/dev/null | wc -l):wrap" \
+        --bind 'enter:change-preview-window(hidden|down,50%,wrap)' \
+        --bind "start:reload:$0 -a" \
+        --bind "load:reload-sync:sleep 1; $0 -a"
+    exit
+}
+
 main() {
     local port="" pid="" name="" short=false json=false all_ports=false target=""
 
-    [[ $# -eq 0 ]] && { setup_colors; usage; }
+    [[ $# -eq 0 ]] && { setup_colors; run_tui; }
 
     while [[ $# -gt 0 ]]; do
         case $1 in
+            -t|--tui)     run_tui ;;
             -p|--port)    port="${2:-}"; shift 2 || die "--port requires an argument" ;;
             -P|--pid)     pid="${2:-}"; shift 2 || die "--pid requires an argument" ;;
             -a|--all-ports) all_ports=true; shift ;;
