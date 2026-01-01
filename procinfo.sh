@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2025.12.31.1"
+readonly VERSION="2026.01.01"
 readonly PROGNAME="${0##*/}"
 
 # Colors
@@ -70,16 +70,12 @@ usage() {
 
 cache_proc_info() {
     local pid=$1
-    # comm can have dots/special chars - get separately to avoid column alignment issues
-    PROC_COMM=$(ps -p "$pid" -o comm= 2>/dev/null | sed 's/^[[:space:]]*//')
+    read -r PROC_COMM < <(ps -p "$pid" -o comm= 2>/dev/null)
     [[ -z "$PROC_COMM" ]] && return 1
     PROC_COMM="${PROC_COMM##*/}"
-    # These are simple fields (no spaces, predictable widths)
-    read -r PROC_USER PROC_RSS PROC_ETIME PROC_PPID <<< "$(ps -p "$pid" -o user=,rss=,etime=,ppid= 2>/dev/null)"
-    # lstart has spaces - separate call
-    PROC_LSTART=$(ps -p "$pid" -o lstart= 2>/dev/null | sed 's/^[[:space:]]*//')
-    # args can have arbitrary content - separate call
-    PROC_ARGS=$(ps -p "$pid" -o args= 2>/dev/null | sed 's/^[[:space:]]*//')
+    read -r PROC_USER PROC_RSS PROC_ETIME PROC_PPID < <(ps -p "$pid" -o user=,rss=,etime=,ppid= 2>/dev/null)
+    read -r PROC_LSTART < <(ps -p "$pid" -o lstart= 2>/dev/null)
+    read -r PROC_ARGS < <(ps -p "$pid" -o args= 2>/dev/null)
     return 0
 }
 
@@ -157,11 +153,16 @@ get_docker_info() {
 
     # Linux: docker-proxy has container info in its args
     if [[ "$PROC_COMM" == "docker-proxy" ]]; then
-        local container_ip container_port
+        local container_ip="" container_port="" _prev=""
 
-        # Parse args - POSIX compatible (no grep -P)
-        container_ip=$(echo "$PROC_ARGS" | sed -n 's/.*-container-ip \([0-9.]*\).*/\1/p')
-        container_port=$(echo "$PROC_ARGS" | sed -n 's/.*-container-port \([0-9]*\).*/\1/p')
+        # Parse args
+        for _arg in $PROC_ARGS; do
+            case "$_prev" in
+                -container-ip)   container_ip="$_arg" ;;
+                -container-port) container_port="$_arg" ;;
+            esac
+            _prev="$_arg"
+        done
 
         # Find container by IP on bridge network
         container_id=$(docker network inspect bridge -f '{{range .Containers}}{{if eq .IPv4Address "'"$container_ip"'/16"}}{{.Name}}{{end}}{{end}}' 2>/dev/null)
@@ -205,10 +206,13 @@ get_docker_info() {
             # Extract container ID from cgroup path
             # cgroups v2: 0::/system.slice/docker-<id>.scope or 0::/docker/<id>
             # cgroups v1: various controllers with /docker/<id> or /docker-<id>.scope
-            cid=$(echo "$cgroup_content" | sed -n 's|.*/docker[/-]\([a-f0-9]\{12,64\}\).*|\1|p' | head -1)
-
+            cid=""
+            if [[ "$cgroup_content" =~ docker[/-]([a-f0-9]{12,64}) ]]; then
+                cid="${BASH_REMATCH[1]}"
             # Also check for containerd pattern: /system.slice/containerd-<id>.scope
-            [[ -z "$cid" ]] && cid=$(echo "$cgroup_content" | sed -n 's|.*/containerd[/-]\([a-f0-9]\{12,64\}\).*|\1|p' | head -1)
+            elif [[ "$cgroup_content" =~ containerd[/-]([a-f0-9]{12,64}) ]]; then
+                cid="${BASH_REMATCH[1]}"
+            fi
 
             if [[ -n "$cid" ]]; then
                 # Verify this is a running Docker container
@@ -565,12 +569,16 @@ print_json() {
     # Build docker object if present
     local docker_json="null"
     if [[ -n "$docker_info" ]]; then
-        local cid cname cimage cip cport
-        cid=$(echo "$docker_info" | grep '^container:' | cut -d: -f2)
-        cname=$(echo "$docker_info" | grep '^name:' | cut -d: -f2)
-        cimage=$(echo "$docker_info" | grep '^image:' | cut -d: -f2)
-        cip=$(echo "$docker_info" | grep '^ip:' | cut -d: -f2)
-        cport=$(echo "$docker_info" | grep '^port:' | cut -d: -f2)
+        local cid="" cname="" cimage="" cip="" cport=""
+        while IFS= read -r _line; do
+            case "$_line" in
+                container:*) cid="${_line#container:}" ;;
+                name:*)      cname="${_line#name:}" ;;
+                image:*)     cimage="${_line#image:}" ;;
+                ip:*)        cip="${_line#ip:}" ;;
+                port:*)      cport="${_line#port:}" ;;
+            esac
+        done <<< "$docker_info"
 
         if [[ -n "$cip" && -n "$cport" ]]; then
             docker_json=$(jq -n \
@@ -711,14 +719,18 @@ print_full() {
         printf '\n'
         printf '%s\n' "${C_CYAN}Docker info${C_RESET} :"
 
-        local cid cname cimage cip cport ccompose ccomposefile
-        cid=$(echo "$docker_info" | grep '^container:' | cut -d: -f2)
-        cname=$(echo "$docker_info" | grep '^name:' | cut -d: -f2)
-        cimage=$(echo "$docker_info" | grep '^image:' | cut -d: -f2)
-        cip=$(echo "$docker_info" | grep '^ip:' | cut -d: -f2)
-        cport=$(echo "$docker_info" | grep '^port:' | cut -d: -f2)
-        ccompose=$(echo "$docker_info" | grep '^compose:' | cut -d: -f2)
-        ccomposefile=$(echo "$docker_info" | grep '^composefile:' | cut -d: -f2-)
+        local cid="" cname="" cimage="" cip="" cport="" ccompose="" ccomposefile=""
+        while IFS= read -r _line; do
+            case "$_line" in
+                container:*)   cid="${_line#container:}" ;;
+                name:*)        cname="${_line#name:}" ;;
+                image:*)       cimage="${_line#image:}" ;;
+                ip:*)          cip="${_line#ip:}" ;;
+                port:*)        cport="${_line#port:}" ;;
+                compose:*)     ccompose="${_line#compose:}" ;;
+                composefile:*) ccomposefile="${_line#composefile:}" ;;
+            esac
+        done <<< "$docker_info"
 
         printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
         printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
