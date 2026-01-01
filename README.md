@@ -2,7 +2,7 @@
 
 A portable process inspector for Linux and macOS. Get details about any running process instantly!
 
-<img width="695" height="582" alt="procinfo_docker" src="https://github.com/user-attachments/assets/2f43fb5a-40f3-4a5f-a3f4-15b0d30b03c3" />
+<img width="1227" height="631" alt="Screenshot_20260102_015743" src="https://github.com/user-attachments/assets/f7dcb4ce-54c7-4fa1-8e3a-30440da5ff5d" />
 
 Also see procinfo_minimal.sh - pure sh implementation of procinfo.
 
@@ -30,6 +30,7 @@ Or just copy the script. It's a bash script with no dependencies beyond standard
 - **Lock detection** - Shows lock files and open files of the process.
 - **Multiple formats** - Human-readable, short one-liner, or JSON
 - **Case-insensitive** - `procinfo nginx` matches `Nginx`, `NGINX`, etc.
+- **TUI mode with fzf** - Turns out, `fzf` is kinda awesome! Beware, this is not a top replacement, it's meant to be used to see open ports, not all processes.
 
 ## Requirements
 
