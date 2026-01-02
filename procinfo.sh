@@ -259,27 +259,26 @@ get_docker_info() {
     local query_port
     if [[ "$target" == "port "* ]]; then
         query_port="${target#port }"
+        container_id=$(docker ps --filter "publish=$query_port" -q 2>/dev/null | head -1)
+        [[ -z "$container_id" ]] && return
+
+        container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
+        image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
+        compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
+        compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
+
+        echo "container:$container_id"
+        echo "name:$container_name"
+        echo "image:$image"
+        [[ -n "$compose_project" ]] && echo "compose:$compose_project"
+        [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
     else
-        # Fallback: try first listening port
-        query_port=$(get_listen_ports | sed -n 's/.*:\([0-9]*\)$/\1/p' | head -1)
+        # PID query on macOS → list all running containers, limitation of Docker's macOS implementation
+        echo "multiple:true"
+        docker ps --format '{{.ID}}:{{.Names}}:{{.Image}}' 2>/dev/null | while IFS=: read -r cid cname cimage; do
+            echo "container:$cid:$cname:$cimage"
+        done
     fi
-    [[ -z "$query_port" ]] && return
-
-    # Find container publishing this port
-    container_id=$(docker ps --filter "publish=$query_port" -q 2>/dev/null | head -1)
-    [[ -z "$container_id" ]] && return
-
-    container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
-    image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
-    local compose_project compose_file
-    compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
-    compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
-
-    echo "container:$container_id"
-    echo "name:$container_name"
-    echo "image:$image"
-    [[ -n "$compose_project" ]] && echo "compose:$compose_project"
-    [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
 }
 
 get_file_handles() {
@@ -717,34 +716,34 @@ print_full() {
     fi
 
     if [[ -n "$docker_info" ]]; then
-        printf '\n'
-        printf '%s\n' "${C_CYAN}Docker info${C_RESET} :"
-
-        local cid="" cname="" cimage="" cip="" cport="" ccompose="" ccomposefile=""
-        while IFS= read -r _line; do
-            case "$_line" in
-                container:*)   cid="${_line#container:}" ;;
-                name:*)        cname="${_line#name:}" ;;
-                image:*)       cimage="${_line#image:}" ;;
-                ip:*)          cip="${_line#ip:}" ;;
-                port:*)        cport="${_line#port:}" ;;
-                compose:*)     ccompose="${_line#compose:}" ;;
-                composefile:*) ccomposefile="${_line#composefile:}" ;;
-            esac
-        done <<< "$docker_info"
-
-        printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
-        printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
-        [[ -n "$ccompose" ]] && \
-        printf '%s\n' "  Compose   : ${C_MAGENTA}$ccompose${C_RESET} ${C_DIM}($ccomposefile)${C_RESET}"
-        [[ -n "$cip" && -n "$cport" ]] && \
-        printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
-        printf '\n'
-        printf '%s\n' "${C_DIM}Docker cheatsheet:${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker logs $cname${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker exec -it $cname sh${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker top $cname${C_RESET}"
-        printf '%s\n' "  ${C_DIM}docker ps //see all containers${C_RESET}"
+        printf '\n%s\n' "${C_CYAN}Docker info${C_RESET} :"
+        if [[ "$docker_info" == "multiple:true"* ]]; then
+            printf '%s\n' "  ${C_DIM}(use --port for specific container)${C_RESET}"
+            echo "$docker_info" | grep "^container:" | while IFS=: read -r _ cid cname cimage; do
+                printf '  %s (%s) - %s\n' "${C_GREEN}$cname${C_RESET}" "$cid" "${C_BLUE}$cimage${C_RESET}"
+            done
+        else
+            local cid="" cname="" cimage="" cip="" cport="" ccompose="" ccomposefile=""
+            while IFS= read -r _line; do
+                case "${_line%%:*}" in
+                    container)   cid="${_line#*:}" ;;
+                    name)        cname="${_line#*:}" ;;
+                    image)       cimage="${_line#*:}" ;;
+                    ip)          cip="${_line#*:}" ;;
+                    port)        cport="${_line#*:}" ;;
+                    compose)     ccompose="${_line#*:}" ;;
+                    composefile) ccomposefile="${_line#*:}" ;;
+                esac
+            done <<< "$docker_info"
+            printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
+            printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
+            [[ -n "$ccompose" ]] && printf '%s\n' "  Compose   : ${C_MAGENTA}$ccompose${C_RESET} ${C_DIM}($ccomposefile)${C_RESET}"
+            [[ -n "$cip" && -n "$cport" ]] && printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
+            printf '\n%s\n' "${C_DIM}Docker cheatsheet:${C_RESET}"
+            for cmd in "logs $cname" "exec -it $cname sh" "top $cname" "ps //see all"; do
+                printf '  %s\n' "${C_DIM}docker $cmd${C_RESET}"
+            done
+        fi
     fi
 
     if [[ -n "$warnings" ]]; then
