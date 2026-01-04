@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2026.01.02"
+readonly VERSION="2026.01.05"
 readonly PROGNAME="${0##*/}"
 
 # Colors
