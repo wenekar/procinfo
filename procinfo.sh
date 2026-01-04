@@ -22,7 +22,7 @@ VERBOSE=false
 SHOW_ENV=false
 
 setup_colors() {
-    if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
+    if [[ -t 1 && -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
         C_RESET=$'\033[0m'
         C_BOLD=$'\033[1m'
         C_DIM=$'\033[90m'
