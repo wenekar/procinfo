@@ -640,7 +640,6 @@ print_json() {
             sockets: $sockets,
             docker: $docker,
             environment: $environment,
-            warnings: $warnings
         }'
 }
 
