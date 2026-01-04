@@ -22,7 +22,7 @@ VERBOSE=false
 SHOW_ENV=false
 
 setup_colors() {
-    if [[ -t 1 && -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
+    if [[ -n "${TERM:-}" && "${TERM}" != "dumb" && "${NO_COLOR:-}" != "1" ]]; then
         C_RESET=$'\033[0m'
         C_BOLD=$'\033[1m'
         C_DIM=$'\033[90m'
@@ -55,6 +55,7 @@ usage() {
     printf '%s\n' "    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output"
     printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
     printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
+    printf '%s\n' "        ${C_GREEN}--color${C_RESET}          Force colored output"
     printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Include descriptions (slow on macOS)"
     printf '%s\n' "    ${C_GREEN}-e${C_RESET}, ${C_GREEN}--env${C_RESET}            Show environment variables"
     printf '%s\n' "    ${C_GREEN}-V${C_RESET}, ${C_GREEN}--verbose${C_RESET}         Full width output (no truncation)"
@@ -565,6 +566,10 @@ print_short() {
 print_json() {
     command -v jq &>/dev/null || die "--json requires jq"
 
+    # Reset colors, jq does not play well with ANSI colors
+    C_RESET='' C_BOLD='' C_DIM=''
+    C_RED='' C_GREEN='' C_YELLOW='' C_BLUE='' C_MAGENTA='' C_CYAN='' C_WHITE=''
+
     local pid=$1 target=$2
     local listen sockets cwd source desc combined_rss git_info docker_info
 
@@ -1027,7 +1032,7 @@ run_tui() {
     command -v fzf &>/dev/null || die "fzf required for --tui (https://github.com/junegunn/fzf)"
     fzf --ansi --layout=reverse --header-lines=3 \
         --clear \
-        --preview "$0 --pid {1}" \
+        --preview "$0 --pid {1} --color" \
         --preview-window 'down,50%,wrap' \
         --bind "focus:transform:echo change-preview-window:down:\$($0 --pid {1} 2>/dev/null | wc -l):wrap" \
         --bind 'enter:change-preview-window(hidden|down,50%,wrap)' \
@@ -1049,6 +1054,7 @@ main() {
             -a|--all-ports) all_ports=true; shift ;;
             -s|--short)   short=true; shift ;;
             -j|--json)    json=true; shift ;;
+            --color)      FORCE_COLOR=1; shift ;;
             --no-color)   NO_COLOR=1; shift ;;
             -d|--description) FULL_DESC=true; shift ;;
             -e|--env) SHOW_ENV=true; shift ;;
@@ -1060,7 +1066,9 @@ main() {
         esac
     done
 
-    setup_colors
+    if [[ -t 1 || "${FORCE_COLOR:-}" == "1" ]]; then
+        setup_colors
+    fi
 
     for cmd in lsof ps pgrep; do
         command -v "$cmd" &>/dev/null || die "missing dependency: $cmd"
