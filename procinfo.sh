@@ -546,19 +546,6 @@ get_env() {
     '
 }
 
-collect_warnings() {
-    local pid=$1 user=$2 rss=$3 listen=$4
-
-    echo "$listen" | grep -qE '0\.0\.0\.0|\*:|::' 2>/dev/null && \
-        echo "Process is listening on a public interface"
-
-    [[ "$user" == "root" ]] && \
-        echo "Process is running as root"
-
-    [[ "$rss" -gt 1048576 ]] 2>/dev/null && \
-        echo "Process is using high memory (>1GB RSS)"
-}
-
 print_short() {
     build_chain "$1"
 }
@@ -633,7 +620,6 @@ print_json() {
         --argjson sockets "$(echo "$sockets" | jq -R . | jq -s .)" \
         --argjson open_files "$(get_open_files | jq -R . | jq -s .)" \
         --argjson locked_files "$(get_locked_files | jq -R . | jq -s .)" \
-        --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
         --argjson docker "$docker_json" \
         --argjson environment "$(get_env "$pid" | jq -R . | jq -s .)" \
         '{
@@ -676,7 +662,7 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info ssh_info open_files locked_files listen sockets warnings combined_rss desc docker_info
+    local cwd source git_info ssh_info open_files locked_files listen sockets combined_rss desc docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
@@ -688,7 +674,6 @@ print_full() {
     locked_files=$(get_locked_files)
     listen=$(get_listen_ports)
     sockets=$(get_listen_sockets)
-    warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
     docker_info=$(get_docker_info "$pid" "$target")
 
     printf '%s\n' "${C_CYAN}Target${C_RESET}      : ${C_WHITE}$target${C_RESET}"
@@ -771,15 +756,7 @@ print_full() {
         fi
     fi
 
-    if [[ -n "$warnings" ]]; then
-        printf '\n'
-        printf '%s\n' "${C_YELLOW}Extra info${C_RESET}  :"
-        echo "$warnings" | while IFS= read -r warn; do
-            printf '%s\n' "  ${C_GREEN}-${C_RESET} ${C_GREEN}$warn${C_RESET}"
-        done
-    fi
-
-    if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || "$file_handles" == "0"* ) ]]; then
+    if [[ $EUID -ne 0 && ( -z "$cwd" || -z "$listen" || -z "$sockets" || -z "$open_files") ]]; then
         printf '\n'
         printf '%s\n' "${C_DIM}Note: Some info may be hidden due to permissions. Try sudo for full details.${C_RESET}"
     fi
