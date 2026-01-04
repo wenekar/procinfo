@@ -288,28 +288,6 @@ get_docker_info() {
     fi
 }
 
-get_file_handles() {
-    local pid=$1 count limit pct
-    count=$(lsof -p "$pid" 2>/dev/null | wc -l | tr -d ' ')
-    if [[ -f "/proc/$pid/limits" ]]; then
-        limit=$(awk '/Max open files/{print $4}' "/proc/$pid/limits" 2>/dev/null)
-    else
-        limit=$(ulimit -n 2>/dev/null)
-    fi
-
-    [[ ! "$limit" =~ ^[0-9]+$ ]] && return
-
-    pct=$((count * 100 / limit))
-
-    if [[ $pct -ge 75 ]]; then
-        echo "$count of $limit ($pct%) ⚠ high"
-    elif [[ $pct -ge 50 ]]; then
-        echo "$count of $limit ($pct%) ⚠ elevated"
-    elif $VERBOSE; then
-        echo "$count of $limit ($pct%)"
-    fi
-}
-
 get_locked_files() {
     echo "$LSOF_OUTPUT" | awk '
         /\.lock|\.lck|\.pid|lockfile/ {print $9; next}
@@ -615,7 +593,6 @@ print_json() {
         --arg cwd "$cwd" \
         --arg source "$source" \
         --arg git_info "$git_info" \
-        --arg file_handles "$(get_file_handles "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
         --argjson sockets "$(echo "$sockets" | jq -R . | jq -s .)" \
         --argjson open_files "$(get_open_files | jq -R . | jq -s .)" \
