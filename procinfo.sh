@@ -145,8 +145,14 @@ build_chain() {
     echo "$chain"
 }
 
+# : = port, / = socket
+# At least on Linux
 get_listen_ports() {
-    echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | sort -u
+    echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | grep ':' | sort -u
+}
+
+get_listen_sockets() {
+    echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | grep '^/' | sort -u
 }
 
 get_docker_info() {
@@ -557,12 +563,13 @@ print_json() {
     command -v jq &>/dev/null || die "--json requires jq"
 
     local pid=$1 target=$2
-    local listen cwd source desc combined_rss git_info docker_info
+    local listen sockets cwd source desc combined_rss git_info docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
     git_info=$(get_git_info "$pid")
     listen=$(get_listen_ports)
+    sockets=$(get_listen_sockets)
     cwd=$(get_working_dir "$pid")
     source=$(get_source "$pid")
     docker_info=$(get_docker_info "$pid" "$target")
@@ -615,6 +622,7 @@ print_json() {
         --arg git_info "$git_info" \
         --arg file_handles "$(get_file_handles "$pid")" \
         --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
+        --argjson sockets "$(echo "$sockets" | jq -R . | jq -s .)" \
         --argjson open_files "$(get_open_files | jq -R . | jq -s .)" \
         --argjson locked_files "$(get_locked_files | jq -R . | jq -s .)" \
         --argjson warnings "$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen" | jq -R . | jq -s .)" \
@@ -635,6 +643,7 @@ print_json() {
             open_files: $open_files,
             locked_files: $locked_files,
             listening: $listening,
+            sockets: $sockets,
             docker: $docker,
             environment: $environment,
             warnings: $warnings
@@ -659,7 +668,7 @@ get_whatis() {
 
 print_full() {
     local pid=$1 target=$2
-    local cwd source git_info ssh_info open_files locked_files listen warnings combined_rss desc docker_info
+    local cwd source git_info ssh_info open_files locked_files listen sockets warnings combined_rss desc docker_info
 
     desc=$(get_whatis "$PROC_COMM")
     combined_rss=$(get_combined_rss "$pid")
@@ -670,6 +679,7 @@ print_full() {
     open_files=$(get_open_files)
     locked_files=$(get_locked_files)
     listen=$(get_listen_ports)
+    sockets=$(get_listen_sockets)
     warnings=$(collect_warnings "$PROC_USER" "$PROC_RSS" "$listen")
     docker_info=$(get_docker_info "$pid" "$target")
 
@@ -698,6 +708,13 @@ print_full() {
         printf '%s\n' "${C_CYAN}Listening${C_RESET}   : ${C_GREEN}$(echo "$listen" | head -1)${C_RESET}"
         echo "$listen" | tail -n +2 | while IFS= read -r port; do
             printf '%s\n' "              ${C_GREEN}$port${C_RESET}"
+        done
+    fi
+
+    if [[ -n "$sockets" ]]; then
+        printf '%s\n' "${C_CYAN}Sockets${C_RESET}     : ${C_GREEN}$(echo "$sockets" | head -1)${C_RESET}"
+        echo "$sockets" | tail -n +2 | while IFS= read -r socket; do
+            printf '%s\n' "              ${C_GREEN}$socket${C_RESET}"
         done
     fi
 
