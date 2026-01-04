@@ -381,6 +381,9 @@ get_source() {
     local ppid=$PROC_PPID
     local pcomm
 
+    # PID 1 is always launched by the kernel.
+    [[ $pid -eq 1 ]] && { echo "kernel"; return; }
+
     pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
     pcomm="${pcomm##*/}"
 
