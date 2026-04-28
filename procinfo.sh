@@ -460,46 +460,75 @@ get_combined_rss() {
 
 get_git_info() {
     local pid=$1
-    local dir=""
-    local exe
-    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
+    local -a candidates=()
+    local cwd exe script
 
+    # Prefer the process CWD - far more likely to be inside a repo than the exe path.
+    # get_working_dir is portable (uses /proc on Linux, lsof on macOS).
+    cwd=$(get_working_dir "$pid")
+    [[ -n "$cwd" ]] && candidates+=("$cwd")
+
+    # Script path from args (handles interpreters like python/node/bash).
+    # Try absolute paths first, then resolve relative paths against cwd.
+    script=$(echo "$PROC_ARGS" | grep -oE '/[^ ]+\.(py|js|ts|rb|pl|sh|lua|php)' | head -1)
+    if [[ -n "$script" && -e "$script" ]]; then
+        candidates+=("$(dirname "$script")")
+    elif [[ -n "$cwd" ]]; then
+        local rel
+        rel=$(echo "$PROC_ARGS" | grep -oE '[^ ]+\.(py|js|ts|rb|pl|sh|lua|php)' | head -1)
+        [[ -n "$rel" && -e "$cwd/$rel" ]] && candidates+=("$(dirname "$cwd/$rel")")
+    fi
+
+    # Exe directory only as a last resort, and skip system paths.
+    exe=$(readlink -f "/proc/$pid/exe" 2>/dev/null)
     if [[ -n "$exe" && -f "$exe" ]]; then
         case "$exe" in
-            /usr/*|/bin/*|/sbin/*)
-                # System binary - check for script in args
-                local script
-                script=$(echo "$PROC_ARGS" | grep -oE '/[^ ]+\.(py|js|rb|pl|sh)' | head -1)
-                if [[ -n "$script" && -f "$script" ]]; then
-                    dir=$(dirname "$script")
-                else
-                    # System binary, no script - git info not relevant
-                    echo "not found"
-                    return
-                fi
-                ;;
-            *)
-                dir=$(dirname "$exe")
-                ;;
+            /usr/*|/bin/*|/sbin/*) ;;
+            *) candidates+=("$(dirname "$exe")") ;;
         esac
     fi
 
-    [[ -z "$dir" || "$dir" == "unknown" ]] && return
+    local dir git_path
+    for dir in "${candidates[@]}"; do
+        while [[ -n "$dir" && "$dir" != "/" ]]; do
+            if [[ -e "$dir/.git" ]]; then
+                # .git is a directory for normal repos, a file ("gitdir: ...") for worktrees/submodules.
+                if [[ -d "$dir/.git" ]]; then
+                    git_path="$dir/.git"
+                else
+                    git_path=$(awk '/^gitdir:/{print $2; exit}' "$dir/.git" 2>/dev/null)
+                    [[ "$git_path" != /* ]] && git_path="$dir/$git_path"
+                fi
+                [[ -r "$git_path/HEAD" ]] || break
 
-    while [[ "$dir" != "/" && -n "$dir" ]]; do
-        if [[ -d "$dir/.git" ]]; then
-            local repo branch remote
-            repo=$(basename "$dir")
-            branch=$(sed 's|ref: refs/heads/||' "$dir/.git/HEAD" 2>/dev/null)
-            remote=$(awk '/\[remote "origin"\]/{found=1} found && /url = /{print $3; exit}' "$dir/.git/config" 2>/dev/null)
-            if [[ -n "$remote" ]]; then
-                echo "$repo ($branch) - $remote"
-            else
-                echo "$repo ($branch)"
+                local repo branch head remote
+                repo=$(basename "$dir")
+                read -r head < "$git_path/HEAD"
+                if [[ "$head" == ref:* ]]; then
+                    branch="${head#ref: refs/heads/}"
+                else
+                    branch="(detached ${head:0:7})"
+                fi
+
+                # config may live in the worktree's commondir.
+                local config="$git_path/config"
+                if [[ ! -f "$config" && -f "$git_path/commondir" ]]; then
+                    local common
+                    read -r common < "$git_path/commondir"
+                    [[ "$common" != /* ]] && common="$git_path/$common"
+                    config="$common/config"
+                fi
+                remote=$(awk '/^\[remote "origin"\]/{f=1;next} /^\[/{f=0} f && /url[[:space:]]*=/{sub(/^[^=]*=[[:space:]]*/,""); print; exit}' "$config" 2>/dev/null)
+
+                if [[ -n "$remote" ]]; then
+                    echo "$repo ($branch) - $remote"
+                else
+                    echo "$repo ($branch)"
+                fi
+                return
             fi
-            return
-        fi
-        dir=$(dirname "$dir")
+            dir=$(dirname "$dir")
+        done
     done
 }
 
