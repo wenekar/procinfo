@@ -39,35 +39,37 @@ setup_colors() {
 die() { printf '%s\n' "${C_RED}error:${C_RESET} $1" >&2; exit 1; }
 
 usage() {
-    printf '%s\n' "${C_CYAN}${C_BOLD}${PROGNAME}${C_RESET} - process information"
-    printf '\n'
-    printf '%s\n' "${C_YELLOW}USAGE${C_RESET}"
-    printf '%s\n' "    ${PROGNAME} --port <port>"
-    printf '%s\n' "    ${PROGNAME} --pid <pid>"
-    printf '%s\n' "    ${PROGNAME} <name>"
-    printf '%s\n' "    ${PROGNAME} --all-ports"
-    printf '\n'
-    printf '%s\n' "${C_YELLOW}OPTIONS${C_RESET}"
-    printf '%s\n' "    ${C_GREEN}-p${C_RESET}, ${C_GREEN}--port${C_RESET} <port>    Find process listening on port"
-    printf '%s\n' "    ${C_GREEN}-P${C_RESET}, ${C_GREEN}--pid${C_RESET} <pid>      Inspect specific PID"
-    printf '%s\n' "    ${C_GREEN}-a${C_RESET}, ${C_GREEN}--all-ports${C_RESET}      List all process PIDs of all active ports"
-    printf '%s\n' "    ${C_GREEN}-t${C_RESET}, ${C_GREEN}--tui${C_RESET}            Interactive TUI mode (requires fzf)"
-    printf '%s\n' "    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output"
-    printf '%s\n' "    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)"
-    printf '%s\n' "        ${C_GREEN}--no-color${C_RESET}       Disable colored output"
-    printf '%s\n' "        ${C_GREEN}--color${C_RESET}          Force colored output"
-    printf '%s\n' "    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}     Include descriptions (slow on macOS)"
-    printf '%s\n' "    ${C_GREEN}-e${C_RESET}, ${C_GREEN}--env${C_RESET}            Show environment variables"
-    printf '%s\n' "    ${C_GREEN}-V${C_RESET}, ${C_GREEN}--verbose${C_RESET}         Full width output (no truncation)"
-    printf '%s\n' "    ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}           Show this help"
-    printf '%s\n' "    ${C_GREEN}-v${C_RESET}, ${C_GREEN}--version${C_RESET}        Show version"
-    printf '\n'
-    printf '%s\n' "${C_YELLOW}EXAMPLES${C_RESET}"
-    printf '%s\n' "    ${PROGNAME} --port ${C_MAGENTA}3306${C_RESET}"
-    printf '%s\n' "    ${PROGNAME} --pid ${C_MAGENTA}1234${C_RESET}"
-    printf '%s\n' "    ${PROGNAME} ${C_CYAN}nginx${C_RESET}"
-    printf '%s\n' "    ${PROGNAME} --all-ports"
-    printf '%s\n' "    ${PROGNAME} --tui"
+    cat <<EOF
+${C_CYAN}${C_BOLD}${PROGNAME}${C_RESET} - process information
+
+${C_YELLOW}USAGE${C_RESET}
+    ${PROGNAME} --port <port>
+    ${PROGNAME} --pid <pid>
+    ${PROGNAME} <name>
+    ${PROGNAME} --all-ports
+
+${C_YELLOW}OPTIONS${C_RESET}
+    ${C_GREEN}-p${C_RESET}, ${C_GREEN}--port${C_RESET} <port>    Find process listening on port
+    ${C_GREEN}-P${C_RESET}, ${C_GREEN}--pid${C_RESET} <pid>      Inspect specific PID
+    ${C_GREEN}-a${C_RESET}, ${C_GREEN}--all-ports${C_RESET}      List all process PIDs of all active ports
+    ${C_GREEN}-t${C_RESET}, ${C_GREEN}--tui${C_RESET}            Interactive TUI mode (requires fzf)
+    ${C_GREEN}-s${C_RESET}, ${C_GREEN}--short${C_RESET}          One-line output
+    ${C_GREEN}-j${C_RESET}, ${C_GREEN}--json${C_RESET}           JSON output (requires jq)
+        ${C_GREEN}--no-color${C_RESET}       Disable colored output
+        ${C_GREEN}--color${C_RESET}          Force colored output
+    ${C_GREEN}-d${C_RESET}, ${C_GREEN}--description${C_RESET}    Include descriptions (slow on macOS)
+    ${C_GREEN}-e${C_RESET}, ${C_GREEN}--env${C_RESET}            Show environment variables
+    ${C_GREEN}-V${C_RESET}, ${C_GREEN}--verbose${C_RESET}        Full width output (no truncation)
+    ${C_GREEN}-h${C_RESET}, ${C_GREEN}--help${C_RESET}           Show this help
+    ${C_GREEN}-v${C_RESET}, ${C_GREEN}--version${C_RESET}        Show version
+
+${C_YELLOW}EXAMPLES${C_RESET}
+    ${PROGNAME} --port ${C_MAGENTA}3306${C_RESET}
+    ${PROGNAME} --pid ${C_MAGENTA}1234${C_RESET}
+    ${PROGNAME} ${C_CYAN}nginx${C_RESET}
+    ${PROGNAME} --all-ports
+    ${PROGNAME} --tui
+EOF
     exit 0
 }
 
