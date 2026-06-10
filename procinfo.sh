@@ -73,11 +73,21 @@ EOF
     exit 0
 }
 
+get_ppid() {
+    ps -p "$1" -o ppid= 2>/dev/null | tr -d ' '
+}
+
+# Basename of a PID's command, whitespace-trimmed
+get_comm() {
+    local comm
+    read -r comm < <(ps -p "$1" -o comm= 2>/dev/null)
+    printf '%s\n' "${comm##*/}"
+}
+
 cache_proc_info() {
     local pid=$1
-    read -r PROC_COMM < <(ps -p "$pid" -o comm= 2>/dev/null)
+    PROC_COMM=$(get_comm "$pid")
     [[ -z "$PROC_COMM" ]] && return 1
-    PROC_COMM="${PROC_COMM##*/}"
     read -r PROC_USER PROC_RSS PROC_ETIME PROC_PPID < <(ps -p "$pid" -o user=,rss=,etime=,ppid= 2>/dev/null)
     read -r PROC_LSTART < <(ps -p "$pid" -o lstart= 2>/dev/null)
     read -r PROC_ARGS < <(ps -p "$pid" -o args= 2>/dev/null)
@@ -134,13 +144,12 @@ build_chain() {
             ppid=$PROC_PPID
             first=false
         else
-            ppid=$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')
+            ppid=$(get_ppid "$pid")
         fi
         [[ -z "$ppid" ]] && break
 
-        pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+        pcomm=$(get_comm "$ppid")
         [[ -z "$pcomm" ]] && break
-        pcomm="${pcomm##*/}"
 
         chain="${C_BLUE}$pcomm${C_RESET} ${C_DIM}(pid $ppid)${C_RESET} ${C_MAGENTA}→${C_RESET} $chain"
         [[ "$ppid" -le 1 ]] && break
@@ -368,18 +377,16 @@ get_source() {
     # PID 1 is always launched by the kernel.
     [[ $pid -eq 1 ]] && { echo "kernel"; return; }
 
-    pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
-    pcomm="${pcomm##*/}"
+    pcomm=$(get_comm "$ppid")
 
     # Same-comm parent (Django reloader, gunicorn master, node cluster):
     # dispatch on the first ancestor whose comm differs
     while [[ "$pcomm" == "$PROC_COMM" && $ppid -gt 1 && $hops -lt 10 ]]; do
         via=" (via $PROC_COMM supervisor)"
         hops=$((hops + 1))
-        ppid=$(ps -p "$ppid" -o ppid= 2>/dev/null | tr -d ' ')
+        ppid=$(get_ppid "$ppid")
         [[ -z "$ppid" ]] && break
-        pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
-        pcomm="${pcomm##*/}"
+        pcomm=$(get_comm "$ppid")
     done
 
     # command name starts with a dash, most likely a login shell
