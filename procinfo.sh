@@ -667,7 +667,7 @@ print_json() {
             listening: $listening,
             sockets: $sockets,
             docker: $docker,
-            environment: $environment,
+            environment: $environment
         }'
 }
 
@@ -679,7 +679,7 @@ get_whatis() {
         whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p'
     elif [[ ${BASH_VERSINFO[0]} -ge 4 ]]; then
         # Bash 4+ supports fractional timeout - fast, no fork
-        read -t 0.5 desc < <(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p') && echo "$desc"
+        read -r -t 0.5 desc < <(whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p') && echo "$desc"
     elif command -v timeout &>/dev/null; then
         # Fallback for bash 3.x with coreutils
         timeout 0.5 whatis "$comm" 2>/dev/null | sed -n '1s/.*- //p'
@@ -907,7 +907,7 @@ print_all_ports() {
             if ($i ~ /:\*$|:[0-9]+$/) {
                 split($i, a, ":")
                 port = a[length(a)]
-                if (port ~ /^[0-9]+$/ && !seen[port]++) print port, $2
+                if (port ~ /^[0-9]+$/ && !seen[port "/" $2]++) print port, $2
                 break
             }
         }
@@ -918,7 +918,7 @@ print_all_ports() {
             if ($i ~ /:\*$|:[0-9]+$/) {
                 split($i, a, ":")
                 port = a[length(a)]
-                if (port ~ /^[0-9]+$/ && !seen[port]++) print "udp:" port, $2
+                if (port ~ /^[0-9]+$/ && !seen[port "/" $2]++) print "udp:" port, $2
                 break
             }
         }
@@ -1055,14 +1055,16 @@ print_all_ports() {
 
 run_tui() {
     command -v fzf &>/dev/null || die "fzf required for --tui (https://github.com/junegunn/fzf)"
+    local self
+    self=$(printf '%q' "$0")
     fzf --ansi --layout=reverse --header-lines=3 \
         --clear \
-        --preview "$0 --pid {1} --color" \
+        --preview "$self --pid {1} --color" \
         --preview-window 'down,50%,wrap' \
-        --bind "focus:transform:echo change-preview-window:down:\$($0 --pid {1} 2>/dev/null | wc -l):wrap" \
+        --bind "focus:transform:echo change-preview-window:down:\$($self --pid {1} 2>/dev/null | wc -l):wrap" \
         --bind 'enter:change-preview-window(hidden|down,50%,wrap)' \
-        --bind "start:reload:$0 -a" \
-        --bind "load:reload-sync:sleep 1; $0 -a"
+        --bind "start:reload:$self -a" \
+        --bind "load:reload-sync:sleep 1; $self -a"
     exit
 }
 
