@@ -1070,26 +1070,17 @@ main() {
         exit 0
     fi
 
+    local hint=""
+    [[ $EUID -ne 0 ]] && hint=" (try sudo?)"
+
     if [[ -n "$port" ]]; then
         pid=$(get_pid_by_port "$port")
         target="port $port"
-        if [[ -z "$pid" ]]; then
-            if [[ $EUID -ne 0 ]]; then
-                die "nothing listening on port $port (try sudo?)"
-            else
-                die "nothing listening on port $port"
-            fi
-        fi
+        [[ -z "$pid" ]] && die "nothing listening on port $port$hint"
     elif [[ -n "$name" ]]; then
         pid=$(get_pid_by_name "$name")
         target="$name"
-        if [[ -z "$pid" ]]; then
-            if [[ $EUID -ne 0 ]]; then
-                die "no process found: '$name' (try sudo?)"
-            else
-                die "no process found: '$name'"
-            fi
-        fi
+        [[ -z "$pid" ]] && die "no process found: '$name'$hint"
     elif [[ -z "$pid" ]]; then
         die "must specify --port, --pid, or process name"
     else
