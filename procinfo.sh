@@ -6,7 +6,7 @@
 # https://github.com/pranshuparmar/witr/issues/32
 #
 
-readonly VERSION="2026.01.05"
+readonly VERSION="2026.06.10"
 readonly PROGNAME="${0##*/}"
 
 # Colors
@@ -90,7 +90,8 @@ cache_lsof() {
 
 get_pid_by_port() {
     local result
-    result=$(lsof -i :"$1" -t 2>/dev/null | head -1)
+    result=$(lsof -iTCP:"$1" -sTCP:LISTEN -t 2>/dev/null | head -1)
+    [[ -z "$result" ]] && result=$(lsof -iUDP:"$1" -t 2>/dev/null | head -1)
     echo "${result:-}"
 }
 
@@ -163,9 +164,11 @@ get_docker_info() {
     # Linux: docker-proxy has container info in its args
     if [[ "$PROC_COMM" == "docker-proxy" ]]; then
         local container_ip="" container_port="" _prev=""
+        local -a _argv
 
         # Parse args
-        for _arg in $PROC_ARGS; do
+        read -ra _argv <<< "$PROC_ARGS"
+        for _arg in "${_argv[@]}"; do
             case "$_prev" in
                 -container-ip)   container_ip="$_arg" ;;
                 -container-port) container_port="$_arg" ;;
@@ -358,7 +361,7 @@ get_ssh_info() {
 get_source() {
     local pid=$1
     local ppid=$PROC_PPID
-    local pcomm
+    local pcomm via="" hops=0
 
     # PID 1 is always launched by the kernel.
     [[ $pid -eq 1 ]] && { echo "kernel"; return; }
@@ -366,8 +369,27 @@ get_source() {
     pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
     pcomm="${pcomm##*/}"
 
+    # Same-comm parent (Django reloader, gunicorn master, node cluster):
+    # dispatch on the first ancestor whose comm differs
+    while [[ "$pcomm" == "$PROC_COMM" && $ppid -gt 1 && $hops -lt 10 ]]; do
+        via=" (via $PROC_COMM supervisor)"
+        hops=$((hops + 1))
+        ppid=$(ps -p "$ppid" -o ppid= 2>/dev/null | tr -d ' ')
+        [[ -z "$ppid" ]] && break
+        pcomm=$(ps -p "$ppid" -o comm= 2>/dev/null)
+        pcomm="${pcomm##*/}"
+    done
+
     # command name starts with a dash, most likely a login shell
-    [[ "$pcomm" == -* ]] && { echo "interactive $pcomm shell (login)"; return; }
+    [[ "$pcomm" == -* ]] && { echo "interactive $pcomm shell (login)$via"; return; }
+
+    local result
+    result=$(get_source_desc "$pid" "$pcomm")
+    echo "${result}${via}"
+}
+
+get_source_desc() {
+    local pid=$1 pcomm=$2
 
     case "$pcomm" in
         systemd)
@@ -833,9 +855,11 @@ format_etime() {
         [[ $mins -gt 1 ]] && result+="s"
     fi
 
-    [[ -n "$result" ]] && result+=", "
-    result+="${secs} second"
-    [[ $secs -gt 1 ]] && result+="s"
+    if [[ $secs -gt 0 ]]; then
+        [[ -n "$result" ]] && result+=", "
+        result+="${secs} second"
+        [[ $secs -gt 1 ]] && result+="s"
+    fi
 
     [[ -z "$result" ]] && result="just now"
 
@@ -876,9 +900,9 @@ print_all_ports() {
     [[ $col_cmd -lt 30 ]] && col_cmd=30
     [[ $col_cwd -lt 30 ]] && col_cwd=30
 
-    # Step 1: Get port:pid pairs
-    local ports_data pids
-    ports_data=$(lsof -i -P -n 2>/dev/null | awk '/LISTEN/{
+    # Step 1: Get port:pid pairs (TCP listeners, then bound UDP sockets)
+    local ports_data udp_data pids
+    ports_data=$(lsof -iTCP -sTCP:LISTEN -P -n 2>/dev/null | awk '{
         for (i=1; i<=NF; i++) {
             if ($i ~ /:\*$|:[0-9]+$/) {
                 split($i, a, ":")
@@ -888,6 +912,25 @@ print_all_ports() {
             }
         }
     }' | sort -n)
+
+    udp_data=$(lsof -iUDP -P -n 2>/dev/null | awk '!/->/{
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /:\*$|:[0-9]+$/) {
+                split($i, a, ":")
+                port = a[length(a)]
+                if (port ~ /^[0-9]+$/ && !seen[port]++) print "udp:" port, $2
+                break
+            }
+        }
+    }' | sort -t: -k2 -n)
+
+    if [[ -n "$udp_data" ]]; then
+        if [[ -n "$ports_data" ]]; then
+            ports_data="$ports_data"$'\n'"$udp_data"
+        else
+            ports_data="$udp_data"
+        fi
+    fi
 
     [[ -z "$ports_data" ]] && return
 
