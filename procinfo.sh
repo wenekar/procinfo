@@ -168,9 +168,47 @@ get_listen_sockets() {
     echo "$LSOF_OUTPUT" | awk '/LISTEN/{print $9}' | grep '^/' | sort -u
 }
 
+# Inspect a container and emit its details as key:value lines.
+# $1 = container id, $2 = internal ip (optional), $3 = internal port (optional)
+emit_container_info() {
+    local cid=$1 ip=${2:-} port=${3:-}
+    local name image compose_project compose_file
+    name=$(docker inspect -f '{{.Name}}' "$cid" 2>/dev/null | tr -d '/')
+    image=$(docker inspect -f '{{.Config.Image}}' "$cid" 2>/dev/null)
+    compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$cid" 2>/dev/null)
+    compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$cid" 2>/dev/null)
+
+    echo "container:$cid"
+    echo "name:$name"
+    echo "image:$image"
+    [[ -n "$compose_project" ]] && echo "compose:$compose_project"
+    [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
+    [[ -n "$ip" ]] && echo "ip:$ip"
+    [[ -n "$port" ]] && echo "port:$port"
+}
+
+# Parse get_docker_info output into DKR_* globals
+parse_docker_info() {
+    DKR_ID="" DKR_NAME="" DKR_IMAGE="" DKR_IP="" DKR_PORT="" DKR_COMPOSE="" DKR_COMPOSE_FILE=""
+    local _line
+    while IFS= read -r _line; do
+        case "${_line%%:*}" in
+            container)   DKR_ID="${_line#*:}" ;;
+            name)        DKR_NAME="${_line#*:}" ;;
+            image)       DKR_IMAGE="${_line#*:}" ;;
+            ip)          DKR_IP="${_line#*:}" ;;
+            port)        DKR_PORT="${_line#*:}" ;;
+            compose)     DKR_COMPOSE="${_line#*:}" ;;
+            composefile) DKR_COMPOSE_FILE="${_line#*:}" ;;
+        esac
+    done <<< "$1"
+}
+
 get_docker_info() {
     local pid=$1 target=$2
-    local container_id container_name image
+    local container_id
+
+    command -v docker &>/dev/null || return
 
     # Linux: docker-proxy has container info in its args
     if [[ "$PROC_COMM" == "docker-proxy" ]]; then
@@ -197,26 +235,12 @@ get_docker_info() {
 
         [[ -z "$container_id" ]] && return
 
-        container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
-        image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
-        local compose_project compose_file
-        compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
-        compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
-
-        echo "container:$container_id"
-        echo "name:$container_name"
-        echo "image:$image"
-        [[ -n "$compose_project" ]] && echo "compose:$compose_project"
-        [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
-        echo "ip:$container_ip"
-        echo "port:$container_port"
+        emit_container_info "$container_id" "$container_ip" "$container_port"
         return
     fi
 
     # Linux: Check if process (or any ancestor) is running inside a container via cgroups
     if [[ -d "/proc" ]]; then
-        command -v docker &>/dev/null || return
-
         local check_pid=$pid
         local cgroup_content cid
 
@@ -243,34 +267,21 @@ get_docker_info() {
                 [[ -z "$container_id" ]] && container_id=$(docker ps -q 2>/dev/null | grep "^${cid:0:12}" | head -1)
 
                 if [[ -n "$container_id" ]]; then
-                    container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
-                    image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
-                    local compose_project compose_file container_ip
-                    compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
-                    compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
-
                     # Get container's IP address from network settings
+                    local container_ip
                     container_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_id" 2>/dev/null)
-
-                    echo "container:${container_id:0:12}"
-                    echo "name:$container_name"
-                    echo "image:$image"
-                    [[ -n "$compose_project" ]] && echo "compose:$compose_project"
-                    [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
-                    [[ -n "$container_ip" ]] && echo "ip:$container_ip"
+                    emit_container_info "${container_id:0:12}" "$container_ip"
                     return
                 fi
             fi
 
             # Move to parent process
-            check_pid=$(ps -p "$check_pid" -o ppid= 2>/dev/null | tr -d ' ')
+            check_pid=$(get_ppid "$check_pid")
             [[ -z "$check_pid" ]] && break
         done
     fi
 
     # macOS: Docker Desktop uses com.docker.backend, vpnkit, etc.
-    command -v docker &>/dev/null || return
-
     case "$PROC_COMM" in
         com.docker*|vpnkit*|Docker*) ;;
         *) return ;;
@@ -283,16 +294,7 @@ get_docker_info() {
         container_id=$(docker ps --filter "publish=$query_port" -q 2>/dev/null | head -1)
         [[ -z "$container_id" ]] && return
 
-        container_name=$(docker inspect -f '{{.Name}}' "$container_id" 2>/dev/null | tr -d '/')
-        image=$(docker inspect -f '{{.Config.Image}}' "$container_id" 2>/dev/null)
-        compose_project=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$container_id" 2>/dev/null)
-        compose_file=$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}' "$container_id" 2>/dev/null)
-
-        echo "container:$container_id"
-        echo "name:$container_name"
-        echo "image:$image"
-        [[ -n "$compose_project" ]] && echo "compose:$compose_project"
-        [[ -n "$compose_file" ]] && echo "composefile:$compose_file"
+        emit_container_info "$container_id"
     else
         # PID query on macOS → list all running containers, limitation of Docker's macOS implementation
         echo "multiple:true"
@@ -588,6 +590,11 @@ print_short() {
     build_chain "$1"
 }
 
+# stdin lines -> JSON string array
+to_json_arr() {
+    jq -R . | jq -s .
+}
+
 print_json() {
     command -v jq &>/dev/null || die "--json requires jq"
 
@@ -610,30 +617,21 @@ print_json() {
     # Build docker object if present
     local docker_json="null"
     if [[ -n "$docker_info" ]]; then
-        local cid="" cname="" cimage="" cip="" cport=""
-        while IFS= read -r _line; do
-            case "$_line" in
-                container:*) cid="${_line#container:}" ;;
-                name:*)      cname="${_line#name:}" ;;
-                image:*)     cimage="${_line#image:}" ;;
-                ip:*)        cip="${_line#ip:}" ;;
-                port:*)      cport="${_line#port:}" ;;
-            esac
-        done <<< "$docker_info"
+        parse_docker_info "$docker_info"
 
-        if [[ -n "$cip" && -n "$cport" ]]; then
+        if [[ -n "$DKR_IP" && -n "$DKR_PORT" ]]; then
             docker_json=$(jq -n \
-                --arg id "$cid" \
-                --arg name "$cname" \
-                --arg image "$cimage" \
-                --arg ip "$cip" \
-                --arg port "$cport" \
+                --arg id "$DKR_ID" \
+                --arg name "$DKR_NAME" \
+                --arg image "$DKR_IMAGE" \
+                --arg ip "$DKR_IP" \
+                --arg port "$DKR_PORT" \
                 '{id: $id, name: $name, image: $image, internal_ip: $ip, internal_port: ($port|tonumber)}')
         else
             docker_json=$(jq -n \
-                --arg id "$cid" \
-                --arg name "$cname" \
-                --arg image "$cimage" \
+                --arg id "$DKR_ID" \
+                --arg name "$DKR_NAME" \
+                --arg image "$DKR_IMAGE" \
                 '{id: $id, name: $name, image: $image}')
         fi
     fi
@@ -653,12 +651,12 @@ print_json() {
         --arg cwd "$cwd" \
         --arg source "$source" \
         --arg git_info "$git_info" \
-        --argjson listening "$(echo "$listen" | jq -R . | jq -s .)" \
-        --argjson sockets "$(echo "$sockets" | jq -R . | jq -s .)" \
-        --argjson open_files "$(get_open_files | jq -R . | jq -s .)" \
-        --argjson locked_files "$(get_locked_files | jq -R . | jq -s .)" \
+        --argjson listening "$(echo "$listen" | to_json_arr)" \
+        --argjson sockets "$(echo "$sockets" | to_json_arr)" \
+        --argjson open_files "$(get_open_files | to_json_arr)" \
+        --argjson locked_files "$(get_locked_files | to_json_arr)" \
         --argjson docker "$docker_json" \
-        --argjson environment "$(get_env "$pid" | jq -R . | jq -s .)" \
+        --argjson environment "$(get_env "$pid" | to_json_arr)" \
         '{
             target: $target,
             process: { name: $comm, pid: ($pid|tonumber), user: $user, description: $desc },
@@ -695,6 +693,16 @@ get_whatis() {
     fi
 }
 
+
+# Print a labelled list: first item on the label line, the rest indented.
+# $1 = padded label, $2 = item color, $3 = newline-separated items
+print_list() {
+    [[ -n "$3" ]] || return 0
+    printf '%s\n' "${C_CYAN}$1${C_RESET}: ${2}$(echo "$3" | head -1)${C_RESET}"
+    echo "$3" | tail -n +2 | while IFS= read -r item; do
+        printf '%s\n' "              ${2}${item}${C_RESET}"
+    done
+}
 
 print_full() {
     local pid=$1 target=$2
@@ -733,33 +741,10 @@ print_full() {
     [[ -n "$git_info" ]] && printf '%s\n' "${C_CYAN}git info${C_RESET}    : ${C_BLUE}$git_info${C_RESET}"
     [[ -n "$cwd" ]] && printf '%s\n' "${C_CYAN}Working Dir${C_RESET} : ${C_BLUE}$cwd${C_RESET}"
 
-    if [[ -n "$listen" ]]; then
-        printf '%s\n' "${C_CYAN}Listening${C_RESET}   : ${C_GREEN}$(echo "$listen" | head -1)${C_RESET}"
-        echo "$listen" | tail -n +2 | while IFS= read -r port; do
-            printf '%s\n' "              ${C_GREEN}$port${C_RESET}"
-        done
-    fi
-
-    if [[ -n "$sockets" ]]; then
-        printf '%s\n' "${C_CYAN}Sockets${C_RESET}     : ${C_GREEN}$(echo "$sockets" | head -1)${C_RESET}"
-        echo "$sockets" | tail -n +2 | while IFS= read -r socket; do
-            printf '%s\n' "              ${C_GREEN}$socket${C_RESET}"
-        done
-    fi
-
-    if [[ -n "$open_files" ]]; then
-        printf '%s\n' "${C_CYAN}Open files${C_RESET}  : ${C_GREEN}$(echo "$open_files" | head -1)${C_RESET}"
-        echo "$open_files" | tail -n +2 | while IFS= read -r file; do
-            printf '%s\n' "              ${C_GREEN}$file${C_RESET}"
-            done
-    fi
-
-    if [[ -n "$locked_files" ]]; then
-        printf '%s\n' "${C_CYAN}Locks${C_RESET}       : ${C_MAGENTA}$(echo "$locked_files" | head -1)${C_RESET}"
-        echo "$locked_files" | tail -n +2 | while IFS= read -r lock; do
-            printf '%s\n' "              ${C_MAGENTA}$lock${C_RESET}"
-            done
-    fi
+    print_list "Listening   " "$C_GREEN" "$listen"
+    print_list "Sockets     " "$C_GREEN" "$sockets"
+    print_list "Open files  " "$C_GREEN" "$open_files"
+    print_list "Locks       " "$C_MAGENTA" "$locked_files"
 
     if [[ -n "$docker_info" ]]; then
         printf '\n%s\n' "${C_CYAN}Docker info${C_RESET} :"
@@ -769,24 +754,13 @@ print_full() {
                 printf '  %s (%s) - %s\n' "${C_GREEN}$cname${C_RESET}" "$cid" "${C_BLUE}$cimage${C_RESET}"
             done
         else
-            local cid="" cname="" cimage="" cip="" cport="" ccompose="" ccomposefile=""
-            while IFS= read -r _line; do
-                case "${_line%%:*}" in
-                    container)   cid="${_line#*:}" ;;
-                    name)        cname="${_line#*:}" ;;
-                    image)       cimage="${_line#*:}" ;;
-                    ip)          cip="${_line#*:}" ;;
-                    port)        cport="${_line#*:}" ;;
-                    compose)     ccompose="${_line#*:}" ;;
-                    composefile) ccomposefile="${_line#*:}" ;;
-                esac
-            done <<< "$docker_info"
-            printf '%s\n' "  Container : ${C_GREEN}$cname${C_RESET} ($cid)"
-            printf '%s\n' "  Image     : ${C_BLUE}$cimage${C_RESET}"
-            [[ -n "$ccompose" ]] && printf '%s\n' "  Compose   : ${C_MAGENTA}$ccompose${C_RESET} ${C_DIM}($ccomposefile)${C_RESET}"
-            [[ -n "$cip" && -n "$cport" ]] && printf '%s\n' "  Internal  : ${C_YELLOW}$cip:$cport${C_RESET}"
+            parse_docker_info "$docker_info"
+            printf '%s\n' "  Container : ${C_GREEN}$DKR_NAME${C_RESET} ($DKR_ID)"
+            printf '%s\n' "  Image     : ${C_BLUE}$DKR_IMAGE${C_RESET}"
+            [[ -n "$DKR_COMPOSE" ]] && printf '%s\n' "  Compose   : ${C_MAGENTA}$DKR_COMPOSE${C_RESET} ${C_DIM}($DKR_COMPOSE_FILE)${C_RESET}"
+            [[ -n "$DKR_IP" && -n "$DKR_PORT" ]] && printf '%s\n' "  Internal  : ${C_YELLOW}$DKR_IP:$DKR_PORT${C_RESET}"
             printf '\n%s\n' "${C_DIM}Docker cheatsheet:${C_RESET}"
-            for cmd in "logs $cname" "exec -it $cname sh" "top $cname" "ps //see all"; do
+            for cmd in "logs $DKR_NAME" "exec -it $DKR_NAME sh" "top $DKR_NAME" "ps //see all"; do
                 printf '  %s\n' "${C_DIM}docker $cmd${C_RESET}"
             done
         fi
@@ -841,34 +815,15 @@ format_etime() {
     remaining_days=$((days % 7))
 
     # Build human readable string
-    if [[ $weeks -gt 0 ]]; then
-        result="${weeks} week"
-        [[ $weeks -gt 1 ]] && result+="s"
-    fi
-
-    if [[ $remaining_days -gt 0 ]]; then
+    local pair value unit
+    for pair in "$weeks week" "$remaining_days day" "$hours hour" "$mins minute" "$secs second"; do
+        value=${pair%% *}
+        unit=${pair#* }
+        [[ $value -gt 0 ]] || continue
         [[ -n "$result" ]] && result+=", "
-        result+="${remaining_days} day"
-        [[ $remaining_days -gt 1 ]] && result+="s"
-    fi
-
-    if [[ $hours -gt 0 ]]; then
-        [[ -n "$result" ]] && result+=", "
-        result+="${hours} hour"
-        [[ $hours -gt 1 ]] && result+="s"
-    fi
-
-    if [[ $mins -gt 0 ]]; then
-        [[ -n "$result" ]] && result+=", "
-        result+="${mins} minute"
-        [[ $mins -gt 1 ]] && result+="s"
-    fi
-
-    if [[ $secs -gt 0 ]]; then
-        [[ -n "$result" ]] && result+=", "
-        result+="${secs} second"
-        [[ $secs -gt 1 ]] && result+="s"
-    fi
+        result+="$value $unit"
+        [[ $value -gt 1 ]] && result+="s"
+    done
 
     [[ -z "$result" ]] && result="just now"
 
